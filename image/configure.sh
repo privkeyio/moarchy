@@ -294,11 +294,10 @@ method=auto
 method=auto
 EOF
   chmod 600 "$ROOTDIR/etc/NetworkManager/system-connections/$WIFI_SSID.nmconnection"
-  # Turning sshd back on is the whole point of a debug image: preseeded wifi
-  # with no way in is not worth building.
-  arch-chroot "$ROOTDIR" systemctl enable sshd.service >/dev/null 2>&1 || true
+  # No sshd for this alone: the way in is MOARCHY_SSH_KEY below, over the USB
+  # cable, never over the network this joins.
   touch "$ROOTDIR/etc/moarchy-debug-image"
-  say "DEBUG IMAGE: wifi '$WIFI_SSID' preseeded and sshd enabled -- do not publish this"
+  say "DEBUG IMAGE: wifi '$WIFI_SSID' preseeded -- do not publish this"
 fi
 
 # --- an authorised ssh key, debug images only ------------------------------
@@ -315,6 +314,12 @@ fi
 # So it is gated on the same debug marker as the wifi PSK, and takes the key
 # from the environment rather than defaulting to whatever is lying around in
 # ~/.ssh.
+#
+# And sshd answers on the USB cable only. The phone becomes 10.66.0.2 on a USB
+# network gadget (NCM, a /30 with the PC at 10.66.0.1); sshd listens on that
+# address alone and admits the user from 10.66.0.1 alone, so no Wi-Fi or mobile
+# network the phone joins can reach it, and mDNS stays off. On the PC, give the
+# interface with MAC 02:00:00:6d:6f:01 the address 10.66.0.1/30.
 if [ -n "${MOARCHY_SSH_KEY:-}" ]; then
   if [ ! -f "$MOARCHY_SSH_KEY" ]; then
     say "!! MOARCHY_SSH_KEY=$MOARCHY_SSH_KEY does not exist; no key preseeded"
@@ -326,23 +331,61 @@ if [ -n "${MOARCHY_SSH_KEY:-}" ]; then
     install -d -m 700 "$ROOTDIR/home/$USER_NAME/.ssh"
     install -m 600 "$MOARCHY_SSH_KEY" "$ROOTDIR/home/$USER_NAME/.ssh/authorized_keys"
     arch-chroot "$ROOTDIR" chown -R "$USER_NAME:$USER_NAME" "/home/$USER_NAME/.ssh"
-    arch-chroot "$ROOTDIR" systemctl enable sshd.service >/dev/null 2>&1 || true
+    install -Dm755 /dev/stdin "$ROOTDIR/usr/local/sbin/moarchy-usbnet" <<'EOF'
+#!/bin/sh
+# moarchy dev link: a USB NCM gadget at 10.66.0.2/30 (image/configure.sh).
+set -eu
+G=/sys/kernel/config/usb_gadget/moarchy
+mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
+# The UDC can register after this unit starts.
+for _ in $(seq 30); do [ -n "$(ls /sys/class/udc 2>/dev/null)" ] && break; sleep 1; done
+udc=$(ls /sys/class/udc | head -1)
+[ -n "$udc" ] || { echo "no USB device controller" >&2; exit 1; }
+if [ ! -d "$G" ]; then
+  mkdir -p "$G/strings/0x409" "$G/configs/c.1/strings/0x409" "$G/functions/ncm.usb0"
+  echo 0x1d6b > "$G/idVendor"; echo 0x0104 > "$G/idProduct"
+  echo moarchy > "$G/strings/0x409/manufacturer"
+  echo "moarchy dev link" > "$G/strings/0x409/product"
+  echo moarchydev > "$G/strings/0x409/serialnumber"
+  echo 02:00:00:6d:6f:01 > "$G/functions/ncm.usb0/host_addr"
+  echo 02:00:00:6d:6f:02 > "$G/functions/ncm.usb0/dev_addr"
+  echo ncm > "$G/configs/c.1/strings/0x409/configuration"
+  ln -s "$G/functions/ncm.usb0" "$G/configs/c.1/"
+  echo "$udc" > "$G/UDC"
+fi
+IF=$(cat "$G/functions/ncm.usb0/ifname")
+ip link set "$IF" up
+ip addr replace 10.66.0.2/30 dev "$IF"
+EOF
+    cat >"$ROOTDIR/etc/systemd/system/moarchy-usbnet.service" <<'EOF'
+[Unit]
+Description=moarchy dev link (USB network, 10.66.0.2)
+After=sys-kernel-config.mount
+Before=sshd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/moarchy-usbnet
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    install -d "$ROOTDIR/etc/NetworkManager/conf.d"
+    printf '[keyfile]\nunmanaged-devices=interface-name:usb0\n' \
+      >"$ROOTDIR/etc/NetworkManager/conf.d/90-moarchy-usbnet.conf"
+    # Bound to the link: no address, no sshd, rather than one on every network.
+    install -d "$ROOTDIR/etc/systemd/system/sshd.service.d"
+    printf '[Unit]\nRequires=moarchy-usbnet.service\nAfter=moarchy-usbnet.service\n' \
+      >"$ROOTDIR/etc/systemd/system/sshd.service.d/20-moarchy-usbnet.conf"
+    printf 'ListenAddress 10.66.0.2\nAllowUsers %s@10.66.0.1\n' "$USER_NAME" \
+      >"$ROOTDIR/etc/ssh/sshd_config.d/20-moarchy-usbnet.conf"
+    arch-chroot "$ROOTDIR" systemctl enable moarchy-usbnet.service sshd.service >/dev/null 2>&1 || true
     touch "$ROOTDIR/etc/moarchy-debug-image"
-    say "DEBUG IMAGE: $(basename "$MOARCHY_SSH_KEY") authorised for $USER_NAME, sshd enabled -- do not publish this"
+    say "DEBUG IMAGE: $(basename "$MOARCHY_SSH_KEY") authorised for $USER_NAME, sshd on the USB link (10.66.0.2) only -- do not publish this"
   fi
 else
   say "no credentials baked in (publishable)"
-fi
-
-# --- mDNS back on, debug images only ---------------------------------------
-# moarchy turns systemd-resolved's mDNS responder off (50-moarchy.conf), but the
-# plugins' install-on-device.sh scripts find the phone as moarchy.local, and a
-# debug image is the only one they can log in to. 90 sorts after 50, so this
-# drop-in wins; LLMNR stays off.
-if [ -e "$ROOTDIR/etc/moarchy-debug-image" ]; then
-  install -d "$ROOTDIR/etc/systemd/resolved.conf.d"
-  printf '[Resolve]\nMulticastDNS=yes\n' >"$ROOTDIR/etc/systemd/resolved.conf.d/90-debug-mdns.conf"
-  say "DEBUG IMAGE: mDNS on, so the phone answers as moarchy.local"
 fi
 
 # --- fstab -----------------------------------------------------------------

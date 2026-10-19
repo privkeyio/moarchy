@@ -9,7 +9,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 KIT="$(cd "$ROOT/../../qs_ui" && pwd)"
-PHONE="${PHONE:-moarchy@moarchy.local}"
+# The USB dev link (image/configure.sh): a dev image answers ssh there and
+# nowhere else, and the address never moves with a lease.
+PHONE="${PHONE:-moarchy@10.66.0.2}"
 ID="moarchy.mail"
 DEST=".config/omarchy/plugins/$ID"
 

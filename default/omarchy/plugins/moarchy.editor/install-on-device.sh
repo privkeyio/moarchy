@@ -13,10 +13,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 KIT="$(cd "$ROOT/../../qs_ui" && pwd)"
-# moarchy.local and not an address: the phone's systemd-resolved answers mDNS
-# (+mDNS is on by default and avahi is not installed), so this follows it from
-# one lease to the next.
-PHONE="${PHONE:-moarchy@moarchy.local}"
+# The USB dev link (image/configure.sh): a dev image answers ssh there and
+# nowhere else, and the address never moves with a lease.
+PHONE="${PHONE:-moarchy@10.66.0.2}"
 ID="moarchy.editor"
 DEST=".config/omarchy/plugins/$ID"
 

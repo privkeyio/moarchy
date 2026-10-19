@@ -193,7 +193,9 @@ pkgver=$_ver
 # 9: ships resolved.conf.d/50-moarchy.conf, which turns off systemd-resolved's
 #    LLMNR and mDNS responders, so the phone stops announcing its hostname to
 #    every network it joins (from the next boot; debug images keep mDNS).
-pkgrel=9
+# 10: 50-moarchy.conf's comment no longer says debug images turn mDNS back
+#    on; they are reached over the USB link instead (image/configure.sh).
+pkgrel=10
 pkgdesc="Omarchy's look, keybindings and theming on a phone, under Hyprland"
 arch=('any')
 url='https://github.com/SimonSchubert/moarchy'

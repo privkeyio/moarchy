@@ -492,9 +492,12 @@ to a running phone is over wifi.
 > The pinned kernel config has `USB_CONFIGFS_ECM=y` and `USB_CONFIGFS_NCM=y`,
 > so it costs nothing but choosing correctly.
 
+*Amended 2026-10-18.* A debug image with `MOARCHY_SSH_KEY` raises one: NCM, per D19, with the phone at 10.66.0.2/30 and the PC at 10.66.0.1. sshd listens on 10.66.0.2 only and admits the user from 10.66.0.1 only, so access to a debug phone is over the cable, not over wifi, and mDNS stays off. A published image raises no gadget, and `image/verify.sh` fails one that carries the gadget, its unit or its sshd drop-in.
+
 **I6** The builder can produce a **debug image** with wifi credentials
 preseeded, so a freshly flashed card joins the network on first boot with no
 keyboard. The PSK comes from the environment, never a flag or a checked-in file.
+*Amended 2026-10-18:* preseeded wifi no longer enables sshd; the only way in is the USB link (I5).
 
 **I6a** A published image carries no credentials, no preseeded network and no
 default password. Debug images are never published.
