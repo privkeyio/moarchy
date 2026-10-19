@@ -46,9 +46,9 @@ is resting on a diagnosis that was wrong.
 `omarchy-*` script they name exists upstream. Because `bin/` here shadows
 `$OMARCHY_PATH/bin` by PATH order, one shim for that wrapper -- routing to
 `moarchy-launch-tui`, a foot at font size 7 -- makes the whole class work
-without reimplementing any of it. Of the 58 Bridged rows, all but four run a
+without reimplementing any of it. Of the 57 Bridged rows, all but three run a
 command byte-identical to upstream's `action`; `docs/settings.md` E2 names the
-four and the selftest diffs them statically.
+three and the selftest diffs them statically.
 
 That terminal is a normal tiled window. It was fullscreened until 2026-09-06,
 which made every row that asks a question unanswerable: sway draws a fullscreen
@@ -59,8 +59,8 @@ appeared and the keys did not.
 
 | Class | Entries |
 | --- | ---: |
-| Native | 69 |
-| Bridged | 58 |
+| Native | 70 |
+| Bridged | 57 |
 | Control Center | 1 |
 | Unsupported | 205 |
 | **Total** | **333** |
@@ -106,7 +106,7 @@ Native 3 · Bridged 2 · Unsupported 3
 | --- | --- | --- | --- | --- |
 | `system` | System | Native | System > Power | also the control center's power glyph target |
 | `system.screensaver` | Screensaver | Unsupported | -- | `omarchy-launch-screensaver` exits 1 unless `ttfx` is present, and ttfx has no aarch64 build in any repo here; it failed silently, which looked like a screensaver that ran |
-| `system.lock` | Lock | Native | System > Power > Lock | `moarchy-system-lock`; blanks unless a hardware keyboard is present |
+| `system.lock` | Lock | Native | System > Power > Lock | `moarchy-system-lock`: the session lock, whose PIN keypad is drawn on the lock surface, then the panel and touchscreen off |
 | `system.suspend` | Suspend | Unsupported | -- | suspending locks the session: the session starts sway-session.target (config/sway/config, the target itself shipped by pkgbuilds/moarchy; install/config.sh started it until 2026-09-06), which brings up 4.x's omarchy-sleep-lock unit, and the lock it raises is an ext-session-lock surface -- so the on-screen keyboard is hidden by the very prompt asking for a password. Same trap idle-lock was disabled for. Locked a phone out on 2026-09-05 |
 | `system.hibernate` | Hibernate | Unsupported | -- | `omarchy-hibernation-available` tests for swap; the SD root has no resume device or RAM-sized swap |
 | `system.logout` | Logout | Native | System > Power > Log out | needs a new `moarchy-system-logout` (`swaymsg exit`); upstream's exits Hyprland |
@@ -483,7 +483,7 @@ Native 6 · Bridged 8 · Unsupported 14
 | `update.hardware.bluetooth` | Bluetooth | Bridged | System > Restart hardware |  |
 | `update.hardware.trackpad` | Trackpad | Unsupported | -- | no touchpad; `omarchy-restart-trackpad` reloads Hyprland input |
 | `update.password.drive` | Drive Encryption | Unsupported | -- | the SD/eMMC root is not LUKS, so cryptsetup has no volume to re-key |
-| `update.password.user` | User | Bridged | Security > Change password | `sudo passwd "$USER"` in a TUI -- an E2 exception. The account ships with a *locked* password, so upstream's bare `passwd` has nothing to authenticate against and fails on its first question; under sudo it sets one outright |
+| `update.password.user` | User | Native | Security > Change PIN | `moarchy-pin-change` in a TUI. The account's password is the lock screen's PIN, so it is read as 6 to 12 digits, twice, and set through `moarchy-pin set`; `passwd` would neither ask for digits nor check them. Bridged, as `sudo passwd "$USER"`, until 2026-10-19 |
 
 ---
 

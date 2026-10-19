@@ -109,6 +109,8 @@ Item {
   // A call that just ended, held on the screen for a moment.
   property var ended: null
   property string ringPath: ""
+  property string lockCallSent: "none"
+  property string lockCallerSent: ""
   property bool raisedForCall: false
   property bool wasLocked: false
 
@@ -313,6 +315,17 @@ Item {
           Quickshell.execDetached(Modem.callAudioCommand("MuteMic", "b", "false"))
         }
       }
+    }
+
+    // The lock screen's copy of the call, sent on every change and not only
+    // while locked: a lock taken mid-call has to show Hang up.
+    var lockCall = root.incoming ? "ringing" : (root.live.length ? "active" : "none")
+    var lockWho = root.incoming ? Numbers.label(root.names, root.incoming.number)
+                : (root.live.length ? Numbers.label(root.names, root.live[0].number) : "")
+    if (!root.offline && (lockCall !== root.lockCallSent || lockWho !== root.lockCallerSent)) {
+      root.lockCallSent = lockCall
+      root.lockCallerSent = lockWho
+      Quickshell.execDetached(Modem.lockCallCommand(lockCall, lockWho))
     }
 
     if (root.live.length === 0 && endedNow.length > 0 && root.ended === null) {

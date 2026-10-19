@@ -290,6 +290,17 @@ function lockCommand() {
   return ["sh", "-c", "[ -x \"$1\" ] && exec \"$1\" lock; exit 0", "sh", SCREEN]
 }
 
+// The lock screen, for the same call. A locked session hides this app's
+// window, so moarchy.lock draws the call itself: the caller with Answer and
+// Decline while it rings, Hang up while it is live. It hears every change,
+// locked or not, because a lock taken mid-call (the idle timeout, the power
+// button) has to know a call is already up. Off moarchy, omarchy-shell -q
+// answers nothing.
+function lockCallCommand(state, caller) {
+  return ["sh", "-c", "exec omarchy-shell -q moarchy-lock call \"$1\" \"$2\"",
+          "sh", String(state), String(caller)]
+}
+
 // A line in the control center's notification list. Nothing on this phone pops up --
 // moarchy.bar turns popups off -- so this is where a text that arrived while
 // the phone was in a pocket is found. `omarchy-notification-send` because the

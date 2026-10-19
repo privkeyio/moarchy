@@ -29,6 +29,7 @@ detail and the reasons. In short:
 | earpiece, speaker, mute | callaudiod over `busctl --user` (`SelectMode`, `EnableSpeaker`, `MuteMic`) |
 | ringing | `fbcli -E phone-incoming-call`, so the phone's feedback profile decides between a tone, a buzz and nothing |
 | a locked screen | `moarchy-screen unlock`, and `lock` again when the call is over |
+| any change in the call | `omarchy-shell moarchy-lock call <state> <caller>` (ringing, active or none), so a locked session shows Answer and Decline while it rings and Hang up while it is live, including a lock taken mid-call |
 
 ModemManager keeps a call until somebody deletes it, so a call that has ended
 is written to the log and then deleted, as GNOME Calls does.

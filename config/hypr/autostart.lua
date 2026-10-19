@@ -40,11 +40,12 @@ hl.on("hyprland.start", function()
   -- focus covered half the screen for the appDrawer's own search field.
   hl.exec_cmd("moarchy-keyboard")
 
-  -- Blank the screen when idle, but never lock it. swayidle is an
-  -- ext-idle-notify-v1 client and carries across unchanged, like swaybg.
+  -- Lock the phone when idle: the session lock and a dark, deaf panel, the
+  -- same as the power button. swayidle is an ext-idle-notify-v1 client and
+  -- carries across unchanged, like swaybg.
   --
   -- Both commands go through moarchy-* wrappers rather than straight at the
   -- compositor: the timeout has to honour the Stay Awake flag, and the resume
-  -- must not light a panel the power button deliberately blanked.
-  hl.exec_cmd("swayidle -w timeout 600 'moarchy-idle-blank' resume 'moarchy-screen wake'")
+  -- must not light a panel the lock deliberately blanked.
+  hl.exec_cmd("swayidle -w timeout 600 'moarchy-idle-lock' resume 'moarchy-screen wake'")
 end)

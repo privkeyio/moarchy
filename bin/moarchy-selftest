@@ -3490,11 +3490,13 @@ DOCTBL
   # ids became Native (docs/settings.md J), then 64/72 as update.timezone, the two
   # setup.plugin toggles and about followed them (L, M, N), then 58/70 when the
   # eight branding ids left for Unsupported, then 58/69 when trigger.toggle.top-bar
-  # followed them: the Show status bar row is gone (docs/settings.md C4a).
-  [[ $totals == "Bridged=58 Control Center=1 Native=69 " ]] \
+  # followed them: the Show status bar row is gone (docs/settings.md C4a). 57/70
+  # when Change password became Change PIN, our own script, and took
+  # update.password.user with it (docs/settings.md R).
+  [[ $totals == "Bridged=57 Control Center=1 Native=70 " ]] \
     && ok "G7 the class totals are the ones committed to ($totals)" \
     || no "G7 the class totals moved: $totals" \
-          "expected Bridged=58 Control Center=1 Native=69; update docs/settings.md if deliberate"
+          "expected Bridged=57 Control Center=1 Native=70; update docs/settings.md if deliberate"
 
   grep -q '^trigger.toggle.notifications	Control Center' <<<"$cov" \
     && ok "H2 the control center-owned toggle is recorded, not rendered" \
@@ -4125,7 +4127,7 @@ ICONS
               "expected the presentation wrapper around 'sudo pacman -Syu'"
     fi
     s dryRun 0 >/dev/null
-    # 128 = G7's 58 Bridged + 69 Native + 1 Control Center, and the two are the same fact
+    # 128 = G7's 57 Bridged + 70 Native + 1 Control Center, and the two are the same fact
     # counted from opposite ends -- so this must move only when that does. 129
     # until 2026-09-08, when the Show status bar row took trigger.toggle.top-bar
     # to Unsupported with it (docs/settings.md C4a).

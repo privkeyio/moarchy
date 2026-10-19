@@ -1,0 +1,52 @@
+#!/bin/bash
+# The PIN, set as the account's password. Root only, reached through sudo.
+#
+#   moarchy-pin first   the very first PIN, from the lock screen's setup mode
+#   moarchy-pin set     a new PIN, from moarchy-pin-change in a terminal
+#
+# The PIN is one line on stdin and nowhere else: not argv, which every process
+# can read in /proc, and not the environment. It goes to chpasswd the same way,
+# so the hash is whatever the system hashes passwords with.
+#
+# `first` is what /etc/sudoers.d/20-moarchy-pin lets the wheel group run with
+# no password, because the lock screen has no PIN to give sudo yet. So it has
+# to be useless once a PIN exists: it refuses unless the account's password is
+# still locked (L) or empty (NP), checked under a lock so two callers cannot
+# both see L. A stranger holding a phone that already has a PIN gets nothing
+# from it. `set` has no rule of its own and is reached through ordinary sudo,
+# which asks for the current PIN once passwordless sudo is gone.
+#
+# Prints nothing on success; one line and a non-zero exit otherwise.
+set -uo pipefail
+
+# Run as root with the caller's environment otherwise intact, so a PATH the
+# caller chose must not decide which chpasswd or passwd runs.
+if (( EUID == 0 )); then
+  export PATH=/usr/bin
+fi
+
+die() { echo "${0##*/}: $*" >&2; exit 1; }
+
+mode=${1:-}
+[[ $mode == first || $mode == set ]] || die "usage: ${0##*/} first|set (the PIN on stdin)"
+(( EUID == 0 )) || die "run it through sudo"
+
+user=${SUDO_USER:-}
+[[ -n $user && $user != root ]] || die "no SUDO_USER to set a PIN for"
+getent passwd "$user" >/dev/null || die "no such user: $user"
+
+exec 9>/run/lock/moarchy-pin.lock || die "cannot open /run/lock/moarchy-pin.lock"
+flock -w 10 9 || die "another PIN change is still running"
+
+if [[ $mode == first ]]; then
+  [[ " $(id -nG "$user") " == *" wheel "* ]] || die "$user is not in wheel"
+  state=$(passwd -S "$user" 2>/dev/null | awk '{print $2}')
+  [[ $state == L || $state == NP ]] || die "a PIN is already set; change it in Settings"
+fi
+
+# One line. A last line with no newline still counts, which is what `read`
+# returning non-zero with a value means.
+IFS= read -r pin || [[ -n ${pin:-} ]] || die "no PIN on stdin"
+[[ $pin =~ ^[0-9]{6,12}$ ]] || die "a PIN is 6 to 12 digits"
+
+printf '%s:%s\n' "$user" "$pin" | chpasswd || die "chpasswd could not set the PIN"

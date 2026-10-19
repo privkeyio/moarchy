@@ -111,6 +111,7 @@ TestCase {
                 Modem.deleteCallsCommand(["/p"]), Modem.deleteSmsCommand(["/p"]),
                 Modem.sendCommand("+4930123", "hi"), Modem.feedbackCommand("phone-incoming-call", true, false),
                 Modem.callAudioCommand("SelectMode", "u", 1), Modem.wakeCommand(), Modem.lockCommand(),
+                Modem.lockCallCommand("ringing", "Mum"),
                 Modem.notifyCommand("Mum", "hi")]
     for (var i = 0; i < cmds.length; i++) {
       compare(cmds[i][0], "sh")
@@ -131,6 +132,10 @@ TestCase {
 
     var accept = Modem.acceptCommand("/org/freedesktop/ModemManager1/Call/1")
     compare(accept.slice(3), ["mmcli", "-o", "/org/freedesktop/ModemManager1/Call/1", "--accept"])
+
+    var call = Modem.lockCallCommand("ringing", text)
+    compare(call[5], text)
+    verify(call[2].indexOf("reboot") < 0)
   }
 
   function test_the_monitor_dies_with_the_shell() {

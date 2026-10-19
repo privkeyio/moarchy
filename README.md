@@ -23,6 +23,8 @@ Download the image for your phone from
 installer to run on the device and no default password to change: the account's
 password is locked and tty1 autologin brings the session up without one.
 
+*Amended 2026-10-19:* the session then comes up on the lock screen, and on first boot that screen asks you to choose a numeric PIN of 6 to 12 digits. The PIN unlocks the phone from then on: at boot, after a power press and after the idle timeout. Change it in Settings > Security > Change PIN.
+
 The bootloader must be unlocked. Unpack the sargo archive, put the phone in
 fastboot (power off, hold Volume Down, tap Power), and run `flash.sh`. That
 overwrites `boot` and `userdata`; the Android install does not survive it.
@@ -306,7 +308,7 @@ system, and the themed terminal/btop/fastfetch/starship stack.
 
 Gone, because they are Hyprland renderer features that a GLES 2.0 device could
 never have driven: blur, shadows, rounded corners, animations, gradient borders,
-`hyprlock` (replaced with a themed `swaylock`).
+`hyprlock` (replaced with a PIN keypad the shell draws on the lock surface).
 
 Also dropped: universal copy/paste (Hyprland `sendshortcut` has no Sway
 equivalent), OCR capture (`tesseract` has no aarch64 build), dictation

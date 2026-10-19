@@ -1,10 +1,10 @@
 #!/bin/bash
-# What swayidle's timeout runs. Blanks the panel unless Stay Awake is set.
+# What swayidle's timeout runs. Locks the phone unless Stay Awake is set.
 #
 # swayidle has no way to skip a timeout conditionally -- the command it runs is
 # fixed at start -- so the condition has to live in the command. Without this the
 # Stay Awake row in Settings (and upstream's `omarchy-toggle-idle`) would read
-# and write its flag correctly while the screen went dark anyway at ten minutes:
+# and write its flag correctly while the phone locked anyway at ten minutes:
 # a switch that is right about everything except the thing it controls.
 #
 # The flag is upstream's, at the path omarchy-toggle-idle writes, so the two
@@ -12,8 +12,9 @@
 STATE_FILE="$HOME/.local/state/omarchy/indicators/stay-awake"
 [[ -f $STATE_FILE ]] && exit 0
 
-# Through moarchy-screen, not straight to swaymsg: it is the one place that
-# knows what powering the panel means here (docs/refactor.md D1, D3). `blank`
-# and not `lock` -- an idle timeout must not set the lock flag, or the resume
-# hook that shares this script's swayidle line would refuse to undo it.
-exec moarchy-screen blank
+# A lock, not a blank, since the lock screen has a keypad of its own
+# (docs/refactor.md D3, amended). moarchy-system-lock takes the session lock
+# and then `moarchy-screen lock`, which sets the flag swayidle's resume hook
+# reads: touching the dark panel does not light it, and the power button does,
+# with the keypad live.
+exec moarchy-system-lock

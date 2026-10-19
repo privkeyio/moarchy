@@ -221,6 +221,8 @@ next `wake` would have refused.
 → `grep -rn 'output \* power' bin/ default/` matches only inside
 `bin/moarchy-screen`
 
+> **Amended 2026-10-19: the power button and the idle timeout lock now.** This section was written while no lock on this phone could be opened, since ext-session-lock hides the on-screen keyboard, so `moarchy-screen lock` meant a dark, deaf panel and nothing more, and D2's "`lock` stays what the power button does" meant exactly that. The `moarchy.lock` plugin draws its own PIN keypad on the lock surface, so locking is safe, and both now take the session lock as well. `moarchy-screen` is unchanged and still the single gate for the panel (D1): a power press that blanks still runs `moarchy-screen toggle` at once and asks the plugin to lock after the double-press window (`gestures.md` Q11d). D3 changes: `moarchy-idle-blank` is renamed `moarchy-idle-lock`, keeps its Stay Awake check, and runs `moarchy-system-lock`, which takes the session lock and then `moarchy-screen lock`. Nothing calls `moarchy-screen blank` on idle any more; it stays the verb for a plain "display off" (D2).
+
 ---
 
 ## E. Shared plugin code

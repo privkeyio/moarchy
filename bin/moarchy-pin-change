@@ -1,0 +1,31 @@
+#!/bin/bash
+# Settings > Security > Change PIN, in a terminal.
+#
+# The new PIN is read twice without echo and handed to the root helper on its
+# stdin, never as an argument. sudo asks for the current PIN itself, on the
+# terminal, once passwordless sudo is gone; until then it asks nothing.
+set -uo pipefail
+
+HELPER=/usr/lib/moarchy/bin/moarchy-pin
+
+read -rsp "New PIN (6 to 12 digits): " pin || { echo; exit 1; }
+echo
+if [[ ! $pin =~ ^[0-9]{6,12}$ ]]; then
+  echo "A PIN is 6 to 12 digits and nothing else. Nothing was changed."
+  exit 1
+fi
+
+read -rsp "The same PIN again: " again || { echo; exit 1; }
+echo
+if [[ $pin != "$again" ]]; then
+  echo "The two did not match. Nothing was changed."
+  exit 1
+fi
+
+sudo -n true 2>/dev/null || echo "sudo asks next: that is your current PIN."
+if printf '%s\n' "$pin" | sudo "$HELPER" set; then
+  echo "PIN changed. Use it on the lock screen from now on."
+else
+  echo "The PIN was not changed."
+  exit 1
+fi

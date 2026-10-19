@@ -122,7 +122,13 @@ pkgver=${_ver#v}
 #    had not decoded the 5120x2880 image by then booted to a blank desktop,
 #    and re-reading the background link did nothing, because the shell took
 #    the real file as already shown.
-pkgrel=8
+# 9: moarchy.lock in shell.json. The moarchy package ships the plugin that owns
+#    the session lock and the PIN (docs/structure.md I8), and a third-party id
+#    loads only when it is listed here. Without this the phone never locks:
+#    the power button, the idle timeout and Settings > Power > Lock all reach
+#    an IPC target that does not exist and fall back to blanking the panel.
+#    First in the list only so it is easy to find. Same two edits as above.
+pkgrel=9
 pkgdesc="Omarchy's configuration and theme layer, with moarchy's plugins hosted"
 arch=('any')
 url="$_url"
@@ -136,7 +142,7 @@ source=("omarchy-$_ref.tar.gz::$_url/archive/$_ref.tar.gz"
         'first-background.patch'
         'qualify-color.py')
 sha256sums=('8cc6b1d9d903c606600395e3b3d80ad9f15bd3ab78f0f19b0f49041b1df82013'
-            '3b562e93dbe65fd5aff211285891df51149eaca967136a7a06d5aac997b112e6'
+            '698d3cec5a9a4071fc965a9503a047697387da034464da1af7556a249e5e4fb2'
             'e2e3425600b71ae016a8d63439a60dbbb2b42eb51f95516089ebd7d9610d67c5'
             'f7229e1d8f627fcec51e7bcf7e4163bd4bee86ec1657bd6acefd34f526e06afb'
             'ccf5c77201815742c094c853dddaffb371175641e4593dd67c2c9fa49348861c')

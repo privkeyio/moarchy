@@ -1,0 +1,32 @@
+#%PAM-1.0
+# The lock screen's PIN check (default/omarchy/plugins/moarchy.lock).
+#
+# Upstream Omarchy's omarchy-lock-password stack (bin/omarchy-apply-lock), with
+# three changes, all to its faillock lines:
+#
+#   preauth is not `silent`, so a locked tally reaches the lock screen as a
+#   message and the keypad can say entry is paused instead of "Wrong PIN".
+#
+#   authsucc carries deny and unlock_time too. Without them it reads
+#   faillock.conf's defaults, deny=3 and unlock_time=600, and a right PIN typed
+#   after three wrong ones fails for ten minutes while preauth calls the
+#   account open.
+#
+#   pam_unix has no `nullok`. An empty password never unlocks; the lock screen
+#   asks for a first PIN instead (bin/moarchy-pin first).
+#
+# Ten wrong PINs pause entry for two minutes. The tally is only writable by an
+# unprivileged locker because tmpfiles creates it for the user at boot
+# (default/tmpfiles/moarchy-faillock.conf).
+#
+# Named moarchy-lock and not omarchy-lock-password on purpose: upstream's own
+# lock plugin refuses to lock without that file, and one locker is the only
+# safe number.
+auth       required                    pam_faillock.so preauth deny=10 unlock_time=120
+-auth      [success=2 default=ignore]  pam_systemd_home.so
+auth       [success=1 default=bad]     pam_unix.so try_first_pass
+auth       [default=die]               pam_faillock.so authfail deny=10 unlock_time=120
+auth       optional                    pam_permit.so
+auth       required                    pam_env.so
+auth       required                    pam_faillock.so authsucc deny=10 unlock_time=120
+account    include                     system-local-login

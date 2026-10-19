@@ -127,6 +127,14 @@ printf '[Resolve]\nMulticastDNS=yes\n' > $W/r/etc/systemd/resolved.conf.d/99-pla
 # 12. the USB dev link's sshd drop-in, in an image that is not a dev image
 mkdir -p $W/r/etc/ssh/sshd_config.d
 printf 'ListenAddress 10.66.0.2\n' > $W/r/etc/ssh/sshd_config.d/20-moarchy-usbnet.conf
+# 13. the first-PIN sudo rule widened to any argument, which is root for
+#     anyone holding the phone: `moarchy-pin set` with no PIN asked
+sed -i 's|moarchy-pin first$|moarchy-pin *|' $W/r/etc/sudoers.d/20-moarchy-pin
+# 14. a faillock line gone from the lock screen's PAM service, so wrong PINs
+#     are never counted
+sed -i '/pam_faillock.so authfail/d' $W/r/etc/pam.d/moarchy-lock
+# 15. upstream's PAM service, which arms upstream's lock beside ours
+cp $W/r/etc/pam.d/moarchy-lock $W/r/etc/pam.d/omarchy-lock-password
 umount $W/r
 
 echo "==> re-sparsing"
@@ -168,6 +176,9 @@ catches "share one pacman master key"  "a pacman keyring shipped in the image"
 catches "plain-HTTP Server line"       "a plain-HTTP Arch Linux ARM mirror"
 catches "LLMNR or mDNS re-enabled"     "an mDNS responder turned back on"
 catches "USB dev link is in this image" "the USB dev link in a release image"
+catches "not exactly the first-PIN rule" "a widened first-PIN sudo rule"
+catches "no faillock authfail line"     "a faillock line missing from moarchy-lock"
+catches "two lockers"                   "upstream's omarchy-lock-password planted"
 
 echo
 if [ $rc -ne 0 ]; then ok "verify.sh exited non-zero ($rc)"; else no "verify.sh exited 0 on a broken image"; fi

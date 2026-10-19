@@ -848,15 +848,17 @@ var PAGES = {
     detail: "Already on for this image",
     run: "omarchy-launch-floating-terminal-with-presentation omarchy-sudo-passwordless",
     launch: "none", covers: { "setup.security.passwordless-sudo": "B" } },
-  // `sudo passwd`, not upstream's bare `passwd` -- the fourth E2 exception.
-  // The image locks the account password, so `passwd` has no current password
-  // to authenticate against and fails on its first question ("Authentication
-  // failure", verified on the device). Under sudo it sets one outright, and
-  // /etc/sudoers.d/10-moarchy means that costs no prompt. This row is the only
-  // way to give the account a password, so it has to be the working form.
-  { id: "passwd", type: "action", glyph: "", label: "Change password",
-    run: "omarchy-launch-floating-terminal-with-presentation 'sudo passwd \"$USER\"'",
-    launch: "none", covers: { "update.password.user": "B", "update.password": "N" } }
+  // The account's password is the PIN the lock screen asks for, set at first
+  // boot (docs/structure.md I8), so changing it is changing the PIN: digits
+  // only, 6 to 12 of them, which `passwd` would neither ask for nor check.
+  // moarchy-pin-change reads it twice without echo and hands it to the root
+  // helper on stdin; sudo asks for the current PIN once passwordless sudo is
+  // gone. Our script rather than upstream's, so update.password.user is Native
+  // now and no longer an E2 exception (docs/settings.md R).
+  { id: "pin", type: "action", glyph: "", label: "Change PIN",
+    keywords: "password passcode lock screen",
+    run: "omarchy-launch-floating-terminal-with-presentation moarchy-pin-change",
+    launch: "none", covers: { "update.password.user": "N", "update.password": "N" } }
 ]},
 
 // -------------------------------------------------------------------- tools

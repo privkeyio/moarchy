@@ -40,7 +40,7 @@ Settings
 ├─ Appearance           Theme · Wallpaper · Font · Status bar · Get more
 ├─ Apps & defaults      Default apps · Web apps · Terminal apps · Packages
 ├─ Shell & plugins      Gestures · Plugins · Restart shell · Reset tmux config
-├─ Security             Remote access · Authorize SSH keys · Passwordless sudo · Change password
+├─ Security             Remote access · Authorize SSH keys · Passwordless sudo · Change PIN
 ├─ Tools                Screenshot · Screen record · Emoji · Reminders · Speed tests
 ├─ System               Date & time · Restart hardware · Update system · Power
 └─ About phone          Omarchy · Kernel · Device · Keybindings · Help & docs · About Omarchy
@@ -353,14 +353,14 @@ list carries the current value when it lacks it.
 `omarchy-menu-emoji`, and no new window appears
 
 **E2** Every bridged row's command is byte-identical to the `action` string in
-`omarchy-menu.jsonc` for the id it covers, with four declared exceptions.
+`omarchy-menu.jsonc` for the id it covers, with three declared exceptions.
 → a static diff of `Pages.js` against the upstream file. `install.package`,
 `install.aur` and `remove.package` differ only in dropping upstream's
 `xdg-terminal-exec --app-id=...` for the TUI terminal, which is the point of
-bridging. `update.password.user` runs `sudo passwd "$USER"` where upstream runs
-`passwd`: the image locks the account password, so the bare form has nothing to
-authenticate against and fails on its first question. Checked statically rather than through `lastLaunch`,
+bridging. Checked statically rather than through `lastLaunch`,
 because `lastLaunch` records the wrapped form that actually ran
+
+*Amended 2026-10-19:* `update.password.user` was the fourth exception, `sudo passwd "$USER"` where upstream runs `passwd`. It is Change PIN now, our own script and Native (section R), so it is no longer a bridged row at all.
 
 **E3** Every command named by a Native or Bridged row resolves on the shell's PATH.
 → `command -v <first word>` succeeds under the PATH in
@@ -503,8 +503,10 @@ of those Unsupported rows carries a non-empty reason
 `docs/menu-coverage.md` is empty
 
 **G7** The class totals are the ones committed to.
-→ `settings coverage | cut -f2 | sort | uniq -c` == 58 Bridged, 70 Native,
+→ `settings coverage | cut -f2 | sort | uniq -c` == 57 Bridged, 70 Native,
 1 Control Center. `Unsupported` is not one of the answers -- see G3
+
+*Amended 2026-10-19:* 57/70 since Change password became Change PIN and took `update.password.user` from Bridged to Native (section R). Before that the selftest's 58/69, not the 58/70 this line said: `trigger.toggle.top-bar` had left for Unsupported (C4a) and this copy was not moved with it.
 
 It was 71/65 until the three `trigger.reminder.*` ids stopped being bridged
 (section J), and 68/68 until `update.timezone`, the two `setup.plugin`
@@ -1145,6 +1147,19 @@ fifty-nine apps, which is what O10 exists to keep out of a search for `e`.
 rows reading `App` say nothing, and two apps may share a name where the id is
 what is stored -- which is the reason `shell.plugins` shows an id too (M1).
 → every app row on `shell.gestures.hold` has a detail equal to its `value`
+
+## R. Change PIN
+
+*Added 2026-10-19.* The account's password is the PIN the lock screen asks for, set on the lock screen at first boot (`docs/structure.md` I8). Changing it is a row on Security, and it replaces Change password: a password the lock screen cannot type is not one this phone can use.
+
+**R1** Change PIN runs `moarchy-pin-change` in the TUI terminal, and claims `update.password.user` as Native.
+→ `settings activate pin` under `dryRun` records `omarchy-launch-floating-terminal-with-presentation moarchy-pin-change`, and `settings coverage` lists `update.password.user` as `Native` on the `security` page's `pin` row
+
+**R2** The new PIN is read twice without echo and refused unless both readings match and are 6 to 12 digits. Nothing is changed on a refusal.
+→ in the terminal: `12345` is refused, and `123456` then `654321` is refused as a mismatch
+
+**R3** The PIN reaches the root helper on stdin, never in argv or the environment, and the helper sets it with `chpasswd`. `sudo /usr/lib/moarchy/bin/moarchy-pin set` is ordinary sudo: it asks for the current PIN once passwordless sudo is gone, and has no sudoers rule of its own.
+→ `grep -l moarchy-pin /etc/sudoers.d/*` lists only `20-moarchy-pin`, and its one rule names `first`
 
 ---
 

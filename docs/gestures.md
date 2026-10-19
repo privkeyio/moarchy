@@ -6,7 +6,7 @@ What the phone's touch gestures must do. Written to the rule in
 `bin/moarchy-selftest --gestures` and `--surfaces` cite these ids. A criterion
 is in one of three states, and the difference matters: **run** — it has a `→`
 check and a suite executes it; **written** — it has a `→` check that nothing
-runs; **stated** — it has no check at all. 66 of the 134 below are run. The
+runs; **stated** — it has no check at all. 68 of the 136 below are run. The
 other 68, and the five the suites run without a `→` line here, are listed under
 [Coverage](#coverage) at the foot.
 
@@ -1481,6 +1481,8 @@ screen that blinks. Android makes the same trade.
 `moarchy-screen toggle` and fires nothing; two inside 400ms call `unlock` and
 then `moarchy-trigger fire power`
 
+*Amended 2026-10-19:* the power button locks the phone now. A single press that blanks the panel also takes the session lock, once the double-press window has passed (Q11d), and a press on a locked phone only toggles the panel (Q11e). The blank is still instant; only the lock waits.
+
 **Q11a** The second press unlocks rather than toggles. The first may have been
 an unlock -- waking the phone and pressing again -- and a toggle there would put
 the screen back out from under the thing that is about to open.
@@ -1497,6 +1499,12 @@ for yet on a button everybody already knows the meaning of, and a phone that
 opened something the first time its owner double-pressed out of habit would
 have surprised them with it.
 → `moarchy-ui get gesture-power` == `none` on a home with no `ui.toml`
+
+**Q11d** A single press that blanks the panel locks the session, but only after the 400ms window has passed with no second press. The press leaves a detached child that sleeps past the window and asks `moarchy-lock` to lock only if the stamp still holds that press, so a double press undoes the blank, fires the trigger and never leaves the session locked behind what it opened. A press that lights the panel on an unlocked session locks nothing.
+→ `scripts/test-power-press.sh`: one press is `screen:toggle` at once and `shell:moarchy-lock:lock` after the window; two fast presses never call the lock; three lock once, for the single at the end
+
+**Q11e** On a locked session a press toggles the panel and does nothing else: no stamp is read, no trigger fires and nothing is locked again. Locked is the absence of the marker `moarchy.lock` keeps in `$XDG_RUNTIME_DIR` while unlocked, so the press costs no IPC.
+→ the same script: with the marker gone, two fast presses are two `screen:toggle` calls and nothing more
 
 ---
 
@@ -1584,7 +1592,7 @@ would have to manufacture: a sheet open across a setting change, a plugin turned
 off, a pull on the status bar. C1 and Q10a both end in a launch, and §C's note
 says why a suite must not fire the one that installs an agent.
 
-Q11, Q11a and Q11b are **run, and not by anything the command below greps** --
+Q11, Q11a, Q11b, Q11d and Q11e are **run, and not by anything the command below greps** --
 `scripts/test-power-press.sh` checks them on the host with `moarchy-screen` and
 `moarchy-trigger` stubbed, because the double press is arithmetic over one
 timestamp file. They are held out of this list by hand for that reason, and so

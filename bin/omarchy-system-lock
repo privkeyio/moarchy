@@ -1,8 +1,7 @@
 #!/bin/bash
-# Shim. NOT a compositor workaround -- hyprlock runs fine here. Every
-# ext-session-lock client, hyprlock and swaylock alike, hides every
-# layer-shell surface while it is up, and on this phone that includes the
-# on-screen keyboard: the password prompt would have nothing to type into
-# and the only way back in is ssh. moarchy-system-lock keeps that
-# deliberate and off the power button (bin/moarchy-screen's header).
+# Shim. Upstream's lock is its own shell plugin, which this phone leaves inert
+# (it has no /etc/pam.d/omarchy-lock-password to authenticate against).
+# moarchy-system-lock takes the session lock through moarchy.lock instead,
+# whose keypad is drawn on the lock surface, so upstream's binding, its idle
+# service and its menu all lock the phone the way the power button does.
 exec moarchy-system-lock "$@"

@@ -15,10 +15,10 @@
 # It used to send SIGRTMIN to wvkbd, and before that drove squeekboard on this
 # same bus name. See moarchy-meta's depends for why each was replaced.
 #
-# Caveat unchanged: this cannot type into swaylock. Under ext-session-lock the
-# compositor draws only the locker's own surface and every layer-shell client is
-# hidden, the keyboard included. That is why bin/moarchy-system-lock
-# blanks instead of locking when no hardware keyboard is attached.
+# Caveat unchanged: this cannot type into the lock screen. Under
+# ext-session-lock the compositor draws only the locker's own surface and every
+# layer-shell client is hidden, the keyboard included. That is why moarchy.lock
+# draws its own PIN keypad on the lock surface.
 
 set -euo pipefail
 

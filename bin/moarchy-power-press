@@ -2,7 +2,8 @@
 # The power button, which on this phone has two meanings (docs/gestures.md Q11).
 #
 #   one press    blank the panel and stop the touchscreen, or undo that
-#                (moarchy-screen toggle) -- unchanged, and still instant
+#                (moarchy-screen toggle) -- still instant; a press that blanks
+#                also locks the session once the double-press window is over
 #   two presses  undo that blank and fire whatever `gesture_power` names
 #
 # **The first press acts immediately and the second undoes it.** The alternative
@@ -12,6 +13,17 @@
 # are not. Android makes the same trade for the same reason, and the blink on a
 # double press is the whole of what it costs.
 #
+# The session lock is the one thing that does wait (Q11d). A press that blanks
+# leaves a detached child that sleeps past the window and then locks, but only
+# if the stamp still holds this press: a second press rewrites or clears it,
+# so a double press undoes the blank, fires the trigger and never leaves the
+# session locked behind whatever it opened.
+#
+# While the session is locked a press only toggles the panel (Q11e). There is
+# nothing to lock and nothing a trigger could open in front of the lock.
+# Locked is read off the marker moarchy.lock leaves in $XDG_RUNTIME_DIR while
+# it is unlocked, so the answer costs no IPC round trip.
+#
 # A file and not a daemon: the binding is `exec`, so each press is a new process
 # with nothing carried over but what is on disk. Two timestamps in one file
 # would be a race between two presses 200ms apart; one line, written last, is
@@ -20,13 +32,20 @@ set -uo pipefail
 
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/moarchy"
 STAMP="$STATE_DIR/power-press"
+SCREEN_FLAG="$STATE_DIR/screen-locked"
+UNLOCKED="${XDG_RUNTIME_DIR:-/nonexistent}/moarchy/unlocked"
 
 # Milliseconds between two presses for the second to count as a double. 400 is
 # Android's own double-press window, and comfortably inside the ~700ms a
 # deliberate double takes on a button this size.
 WINDOW_MS=400
+# How long the delayed lock sleeps: the window and a margin for a second press
+# that was measured inside it but has not written its stamp yet.
+LOCK_AFTER=0.55
 
 now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
+
+[[ -e $UNLOCKED ]] || exec moarchy-screen toggle
 
 mkdir -p "$STATE_DIR"
 now=$(now_ms)
@@ -40,6 +59,7 @@ printf '%s\n' "$now" >"$STAMP"
 if (( last > 0 && now - last <= WINDOW_MS )); then
   # A double. Clear the stamp so three presses are a double and then a single,
   # rather than a double and then another double off the same second press.
+  # Clearing it is also what stands the first press's delayed lock down.
   : >"$STAMP"
   # Undo the blank the first press just did. `unlock` and not `toggle`: the
   # first press may have been an unlock rather than a lock -- waking the phone
@@ -47,6 +67,15 @@ if (( last > 0 && now - last <= WINDOW_MS )); then
   # back out from under the thing about to open.
   moarchy-screen unlock >/dev/null 2>&1
   exec moarchy-trigger fire power
+fi
+
+# Only a press that blanks locks. One that lights the panel on an unlocked
+# session is waking a phone that was never locked, and stays that way.
+if [[ ! -e $SCREEN_FLAG ]]; then
+  (
+    sleep "$LOCK_AFTER"
+    [[ $(cat "$STAMP" 2>/dev/null) == "$now" ]] && omarchy-shell moarchy-lock lock
+  ) </dev/null >/dev/null 2>&1 &
 fi
 
 exec moarchy-screen toggle

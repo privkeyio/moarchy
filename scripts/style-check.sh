@@ -494,12 +494,13 @@ else
   skip "the Sheet.js cases need node, which is not installed here (I1a)"
 fi
 
-# gestures.md Q11. The power button's double-press window, with moarchy-screen
-# and moarchy-trigger stubbed. Pure arithmetic over one timestamp file, so the
-# 400ms rule can be run here rather than checked by hand on glass once.
+# gestures.md Q11. The power button's double-press window, with moarchy-screen,
+# moarchy-trigger and omarchy-shell stubbed. Pure arithmetic over one timestamp
+# file, so the 400ms rule, and the lock that waits it out (Q11d), can be run
+# here rather than checked by hand on glass once.
 printf '\npower button (gestures.md Q11, not a style.md section)\n'
 if pp_out=$(bash scripts/test-power-press.sh 2>&1); then
-  ok "one press toggles, two fire the trigger ($(grep -c PASS <<<"$pp_out") cases, Q11)"
+  ok "one press toggles and then locks, two fire the trigger ($(grep -c PASS <<<"$pp_out") cases, Q11)"
 else
   no "the power button's double press is broken (Q11)" "$pp_out"
 fi

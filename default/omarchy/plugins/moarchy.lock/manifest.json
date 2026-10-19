@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "moarchy.lock",
+  "name": "Lock screen",
+  "version": "1.0.0",
+  "author": "moarchy",
+  "description": "The session lock: a PIN keypad drawn on the lock surface, the first PIN at first boot, and the caller of an incoming call.",
+  "kinds": [
+    "service"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}

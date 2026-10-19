@@ -2,19 +2,13 @@
 # moarchy-screen -- what the power button does on the phone.
 #
 # "Lock" here means: blank the panel and stop the touchscreen from producing
-# events. It deliberately does NOT start a password locker.
-#
-# swaylock and Omarchy 4.x's quickshell lock plugin are both ext-session-lock
-# clients, and under that protocol the compositor draws the locker's surface and
-# nothing else -- every layer-shell client is hidden, the on-screen keyboard
-# included. So a password lock on a device with no keyboard can only be cleared
-# over ssh, and wiring one to the power button would strand the phone on every
-# stray press.
+# events. It does NOT take the session lock; moarchy.lock does that, and
+# moarchy-system-lock and moarchy-power-press call both.
 #
 # A dead touchscreen behind a dark panel gives the thing you actually want from
-# a pocket -- nothing sees the screen, nothing reacts to it -- and the hardware
-# power button is outside that state, so it can always undo it. A real password
-# lock stays deliberate, on Super+Ctrl+L.
+# a pocket -- nothing sees the screen, nothing reacts to it, nothing types PIN
+# attempts into the lock screen -- and the hardware power button is outside
+# that state, so it can always undo it.
 #
 # The lock state lives in a flag file rather than being read back from the
 # output's power flag, because swayidle blanks the same output on its own idle
@@ -65,11 +59,11 @@ case "${1:-toggle}" in
   lock)   lock ;;
   unlock) unlock ;;
   toggle) if [[ -e $FLAG ]]; then unlock; else lock; fi ;;
-  # Dark panel, live touchscreen, no flag. What an idle timeout and a plain
-  # "turn the display off" both mean -- neither of them means lock, and routing
-  # either through lock() would set the flag and then `wake` would refuse to
-  # undo it, which is an idle timeout that bricks the screen until the power
-  # button is found (docs/refactor.md D1, D3).
+  # Dark panel, live touchscreen, no flag. What a plain "turn the display off"
+  # means -- it is not a lock, and routing it through lock() would set the flag
+  # and then `wake` would refuse to undo it, a dark panel nothing but the power
+  # button can light (docs/refactor.md D1, D2). The idle timeout used to come
+  # here too; it locks now, with a keypad to come back to (D3, amended).
   blank)  dpms off ;;
   # swayidle's resume hook, and the one way back on. Any input wakes the panel,
   # but while we are locked the only input that should is the power button,
