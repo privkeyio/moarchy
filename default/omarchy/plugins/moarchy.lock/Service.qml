@@ -16,8 +16,8 @@
 //
 // A PIN is checked by `moarchy-pin check` through sudo, never through PAM: the
 // helper keeps a count only root can write and pauses entry after every tenth
-// wrong PIN, and the uncounted way an unprivileged locker would check
-// (unix_chkpwd) is gone. bin/moarchy-pin says why that matters here.
+// wrong PIN, and every other way to check one goes through it or is gone
+// (bin/moarchy-harden-auth). bin/moarchy-pin says why that matters here.
 //
 // When it locks: at session start, and whenever moarchy-system-lock asks (the
 // power button, the idle timeout, Settings > Power > Lock). A shell restart
@@ -209,8 +209,12 @@ Item {
       lockQueued = true
       return true
     }
+    // Refused, and asked again: Settings may have just set the PIN this
+    // account was missing, and the next lock should not wait for a reboot.
     if (!lockable) {
       logEvent("lock-denied: " + accountMode)
+      lockQueued = true
+      refreshAccount()
       return false
     }
 
@@ -481,7 +485,7 @@ Item {
         if (root.startup !== "") root.handleStartup()
         if (root.lockQueued) {
           root.lockQueued = false
-          root.beginLock()
+          if (root.lockable) root.beginLock()
         }
         root.recoverStrandedLock()
       }
@@ -595,8 +599,8 @@ Item {
     target: "moarchy-lock"
 
     function lock(): string {
-      if (root.probed && !root.lockable) return root.accountMode === "legacy" ? "no-pin" : "no-rule"
-      if (!root.locked && !root.beginLock()) return "failed"
+      if (!root.locked && !root.beginLock())
+        return root.accountMode === "norule" ? "no-rule" : "no-pin"
       return "ok"
     }
 

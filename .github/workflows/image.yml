@@ -111,6 +111,14 @@ jobs:
           docker run --rm --platform linux/arm64 -v "$PWD:/repo:ro" --entrypoint bash moarchy-image \
             -c 'pacman -Sy --noconfirm --needed qt6-declarative >/dev/null && bash /repo/scripts/test-qml.sh' 2>&1 | tee -a "$LOG"
 
+      # The PIN's one door through real sudo and PAM. In a throwaway container,
+      # because it rewrites system-auth.
+      - name: PIN door
+        run: |
+          set -o pipefail
+          docker run --rm --platform linux/arm64 -v "$PWD:/repo:ro" --entrypoint bash moarchy-image \
+            /repo/scripts/test-pam-door.sh 2>&1 | tee -a "$LOG"
+
       - name: Negative test
         run: |
           set -o pipefail

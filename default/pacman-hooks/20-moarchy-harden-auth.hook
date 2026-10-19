@@ -1,0 +1,27 @@
+# One door to the PIN: system-auth through moarchy-pin, and no setuid bit on
+# the programs that would check a password uncounted (bin/moarchy-harden-auth
+# says which and why). Again after any package puts one of them back, and when
+# moarchy itself is installed or upgraded, so a phone has it before its first
+# pam upgrade. image/verify.sh fails an image where either is undone.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Path
+Target = usr/bin/unix_chkpwd
+Target = usr/bin/su
+Target = usr/bin/chfn
+Target = usr/bin/chsh
+Target = usr/bin/passwd
+Target = usr/bin/ksu
+Target = etc/pam.d/system-auth
+
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = moarchy
+
+[Action]
+Description = Routing every PIN check through moarchy-pin...
+When = PostTransaction
+Exec = /usr/lib/moarchy/bin/moarchy-harden-auth

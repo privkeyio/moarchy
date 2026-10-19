@@ -26,12 +26,14 @@ TestCase {
     verify(!Lock.canLock("norule"))
   }
 
-  // The keypad, never setup: setup on an account with a PIN would let anyone
-  // holding the phone choose a new one.
-  function test_an_unreadable_answer_is_the_keypad() {
-    compare(Lock.accountMode(""), "pin")
-    compare(Lock.accountMode("garbage"), "pin")
-    compare(Lock.accountMode(undefined), "pin")
+  // The probe says pin whenever the stamp exists, so anything else has no PIN
+  // a keypad could open: no lock rather than one nobody can leave, and never
+  // setup, which would let anyone holding the phone choose one.
+  function test_an_unreadable_answer_never_locks() {
+    compare(Lock.accountMode(""), "unknown")
+    compare(Lock.accountMode("garbage"), "unknown")
+    compare(Lock.accountMode(undefined), "unknown")
+    verify(!Lock.canLock("unknown"))
     verify(Lock.canLock("pin"))
     verify(Lock.canLock("setup"))
   }
@@ -48,12 +50,12 @@ TestCase {
   }
 
   function test_a_wrong_pin_warns_near_the_pause() {
-    var far = Lock.checkResult(1, "8\n")
+    var far = Lock.checkResult(4, "8\n")
     compare(far.action, "wrong")
     compare(far.message, "Wrong PIN")
-    compare(Lock.checkResult(1, "3").message, "Wrong PIN. 3 tries before a pause.")
-    compare(Lock.checkResult(1, "1").message, "Wrong PIN. 1 try before a pause.")
-    compare(Lock.checkResult(1, "").message, "Wrong PIN")
+    compare(Lock.checkResult(4, "3").message, "Wrong PIN. 3 tries before a pause.")
+    compare(Lock.checkResult(4, "1").message, "Wrong PIN. 1 try before a pause.")
+    compare(Lock.checkResult(4, "").message, "Wrong PIN")
   }
 
   function test_a_pause_says_how_long() {
@@ -67,8 +69,11 @@ TestCase {
     compare(Lock.checkResult(3, "").seconds, 120)
   }
 
-  // A sudo that could not run the helper, a crash, a timeout: not a wrong PIN.
+  // A sudo that could not run the helper (sudo's own exit 1), a crash, a
+  // timeout: not a wrong PIN, which would show "Wrong PIN" for the right one.
   function test_anything_else_is_a_failure_to_ask() {
+    compare(Lock.checkResult(1, "").action, "error")
+    compare(Lock.checkResult(1, "9").action, "error")
     compare(Lock.checkResult(2, "").action, "error")
     compare(Lock.checkResult(1 + 0x100, "").action, "error")
     compare(Lock.checkResult(-1, "").action, "error")

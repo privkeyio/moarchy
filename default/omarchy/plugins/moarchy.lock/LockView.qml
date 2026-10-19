@@ -164,6 +164,8 @@ Item {
         visible: root.onCall
         horizontalAlignment: Text.AlignHCenter
         elide: Text.ElideRight
+        // A contact's name is the one string here from outside the phone.
+        textFormat: Text.PlainText
         text: root.lock ? (root.lock.caller || "Unknown") : ""
         color: root.textOnSurface
         font.family: Style.font.family

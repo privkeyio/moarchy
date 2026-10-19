@@ -441,14 +441,18 @@ done
 # first boot, so the image carries none -- the loop above is still the check
 # for that. What it must carry is everything that makes the PIN mean something.
 #
-# unix_chkpwd without its setuid bit. With it, any process can test PINs
-# against the account as fast as yescrypt allows, uncounted, and the PIN is
-# also the sudo password (default/pacman-hooks/20-moarchy-unix-chkpwd.hook).
-if [ -f "$R/usr/bin/unix_chkpwd" ] && [ -z "$(find "$R/usr/bin/unix_chkpwd" -perm /6000)" ]; then
-  ok "unix_chkpwd is not setuid (PIN checks go through moarchy-pin, which counts)"
-else
-  no "unix_chkpwd is setuid or missing -- any process can guess the PIN uncounted"
-fi
+# One door to the PIN (bin/moarchy-harden-auth). Any other way to test it, at
+# yescrypt's speed and uncounted, is root in about an hour, because the PIN is
+# also the sudo password.
+_suid=$(for _b in unix_chkpwd su chfn chsh passwd ksu; do
+  [ -n "$(find "$R/usr/bin/$_b" -perm /6000 2>/dev/null)" ] && printf '%s ' "$_b"; done)
+[ -z "$_suid" ] && ok "no setuid password checker but sudo (PIN checks are counted)" \
+                || no "$_suid is setuid -- any process can guess the PIN uncounted"
+_sa="$R/etc/pam.d/system-auth"
+grep -qxF 'auth       [success=1 default=bad]     pam_exec.so          quiet quiet_log expose_authtok seteuid /usr/lib/moarchy/bin/moarchy-pin pam' "$_sa" 2>/dev/null &&
+  ! grep -qE '^\s*-?auth\s.*pam_unix\.so' "$_sa" \
+  && ok "system-auth checks the PIN through moarchy-pin (sudo and polkit are counted)" \
+  || no "system-auth checks a password with pam_unix -- sudo can guess the PIN uncounted, in parallel"
 # Upstream's name. Its own lock plugin arms itself when this file exists, and
 # two ext-session-lock clients fighting over one session is a phone neither of
 # them can unlock.

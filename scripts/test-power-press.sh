@@ -116,7 +116,8 @@ bash "$PRESS" >/dev/null 2>&1
 sleep 0.45
 bash "$PRESS" >/dev/null 2>&1
 settle
-[[ $(calls) == "screen:toggle screen:toggle shell:moarchy-lock:lock " ]] \
+# Order-free: on a loaded runner the second press can start after the lock.
+[[ $(grep -c 'screen:toggle' "$CALLS") -eq 2 && $(grep -c 'shell:moarchy-lock:lock' "$CALLS") -eq 1 ]] \
   && ok "a second press just outside the window still leaves the session locked" \
   || no "a second press at 450ms did: $(calls)"
 

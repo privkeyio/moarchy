@@ -514,6 +514,12 @@ else
   no "moarchy-pin does not do what the lock screen relies on (I8)" "$pin_out"
 fi
 
+if ha_out=$(bash scripts/test-harden-auth.sh 2>&1); then
+  ok "moarchy-harden-auth routes system-auth through moarchy-pin and strips setuid ($(grep -c PASS <<<"$ha_out") cases, I8)"
+else
+  no "moarchy-harden-auth leaves another door to the PIN (I8)" "$ha_out"
+fi
+
 # gestures.md Q2, Q2a. The edge table: which axis a sheet arrives on, which way
 # it opens, and where it sits part-way in. Pure arithmetic with no Qt in it, and
 # the first group of cases is each sheet's own pre-Q formula -- so a wrong row

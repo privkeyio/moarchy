@@ -1,0 +1,38 @@
+#!/bin/bash -p
+# One door to the PIN (bin/moarchy-pin says why there can only be one). Root
+# only, and safe to run any number of times.
+#
+#   1. system-auth checks a password through `moarchy-pin pam`, not pam_unix,
+#      so sudo, polkit and a console login are counted and paused with the lock
+#      screen, one check at a time. pam_unix in the same stack would let N
+#      sudo processes started together take N guesses per faillock window.
+#   2. No setuid bit on the programs that check a password through PAM stacks
+#      of their own, uncounted: unix_chkpwd (how an unprivileged locker checks
+#      one), su, chfn, chsh (pam_unix straight, no faillock), passwd (which
+#      asks for the current one before changing it) and ksu. Run as root they
+#      still work; nothing on the phone runs them as the user. The PIN is
+#      changed through `moarchy-pin set` (Settings > Change PIN).
+#
+# Run by image/configure.sh, by moarchy's install script, and by the pacman
+# hook default/pacman-hooks/20-moarchy-harden-auth.hook whenever pam, shadow,
+# util-linux, krb5 or pambase reinstall any of it. image/verify.sh fails an
+# image where either is undone.
+set -euo pipefail
+export PATH=/usr/bin
+
+die() { echo "${0##*/}: $*" >&2; exit 1; }
+(( EUID == 0 )) || die "run it as root"
+
+for f in unix_chkpwd su chfn chsh passwd ksu; do
+  if [[ -e /usr/bin/$f ]]; then chmod u-s,g-s "/usr/bin/$f"; fi
+done
+
+SA=/etc/pam.d/system-auth
+LINE='auth       [success=1 default=bad]     pam_exec.so          quiet quiet_log expose_authtok seteuid /usr/lib/moarchy/bin/moarchy-pin pam'
+grep -qxF "$LINE" "$SA" && exit 0
+# pambase's own line, as it has read since pam_faillock replaced pam_tally2.
+# Anything else is a system-auth this does not know, and is left alone, loudly.
+grep -qE '^auth\s+\[success=1 default=bad\]\s+pam_unix\.so\s+try_first_pass\s+nullok\s*$' "$SA" ||
+  die "$SA has no pam_unix auth line in the shape this replaces; PIN checks through it are NOT counted"
+sed -i -E "s|^auth\s+\[success=1 default=bad\]\s+pam_unix\.so\s+try_first_pass\s+nullok\s*$|$LINE|" "$SA"
+grep -qxF "$LINE" "$SA" || die "could not rewrite $SA"

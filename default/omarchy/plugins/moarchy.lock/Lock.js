@@ -11,14 +11,15 @@
 //           real one; a phone that cannot be opened is worse than one that does
 //           not lock, and before this it never locked at all.
 //   norule  sudo will not run moarchy-pin, so nothing could check a PIN: no lock
-//   pin     anything else, unreadable included. The keypad is the safe failure:
-//           the helper is what decides, and it is asked again after a failure.
+//   unknown anything else. The probe says `pin` whenever moarchy-pin's stamp
+//           exists, so an unreadable answer means there is no PIN a keypad
+//           could open: no lock, and the probe is asked again at the next one.
 function accountMode(line) {
   var t = String(line || "").trim()
   if (t === "pin" || t === "norule") return t
   if (t === "L" || t === "NP") return "setup"
   if (t === "P") return "legacy"
-  return "pin"
+  return "unknown"
 }
 
 function canLock(mode) {
@@ -38,13 +39,14 @@ function startupAction(text) {
   return "boot"
 }
 
-// `moarchy-pin check`'s answer: 0 yes; 1 wrong, with the tries left before
+// `moarchy-pin check`'s answer: 0 yes; 4 wrong, with the tries left before
 // the next pause; 3 paused, with the seconds left; anything else is a failure
-// to ask, not a wrong PIN.
+// to ask, not a wrong PIN. 1 above all: it is what sudo exits with when it
+// will not run the helper at all.
 function checkResult(code, out) {
   var n = parseInt(String(out || "").trim(), 10)
   if (code === 0) return { action: "unlock", seconds: 0, message: "" }
-  if (code === 1) {
+  if (code === 4) {
     var warn = !isNaN(n) && n <= 3
     return { action: "wrong", seconds: 0,
              message: warn ? "Wrong PIN. " + n + (n === 1 ? " try" : " tries") + " before a pause." : "Wrong PIN" }

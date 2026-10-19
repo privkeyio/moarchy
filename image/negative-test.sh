@@ -130,10 +130,12 @@ printf 'ListenAddress 10.66.0.2\n' > $W/r/etc/ssh/sshd_config.d/20-moarchy-usbne
 # 13. the lock screen's sudo rule widened to any argument, which is root for
 #     anyone holding the phone: `moarchy-pin set` with no PIN asked
 sed -i 's|moarchy-pin first$|moarchy-pin *|' $W/r/etc/sudoers.d/20-moarchy-pin
-# 14. unix_chkpwd setuid again, the uncounted way to guess the PIN
-chmod 4755 $W/r/usr/bin/unix_chkpwd
+# 14. su setuid again, an uncounted way to guess the PIN
+chmod 4755 $W/r/usr/bin/su
 # 15. upstream's PAM service, which arms upstream's lock beside ours
 printf '#%%PAM-1.0\nauth required pam_unix.so\n' > $W/r/etc/pam.d/omarchy-lock-password
+# 17. system-auth back on pam_unix, so sudo checks the PIN uncounted
+sed -i 's|pam_exec.so .*moarchy-pin pam$|pam_unix.so          try_first_pass nullok|' $W/r/etc/pam.d/system-auth
 # 16. a second sudoers file granting `moarchy-pin set` with no password
 printf '%%wheel ALL=(root) NOPASSWD: /usr/lib/moarchy/bin/moarchy-pin set\n' > $W/r/etc/sudoers.d/99-planted
 umount $W/r
@@ -178,7 +180,8 @@ catches "plain-HTTP Server line"       "a plain-HTTP Arch Linux ARM mirror"
 catches "LLMNR or mDNS re-enabled"     "an mDNS responder turned back on"
 catches "USB dev link is in this image" "the USB dev link in a release image"
 catches "not exactly the check and first-PIN rule" "a widened lock-screen sudo rule"
-catches "unix_chkpwd is setuid"         "unix_chkpwd setuid again"
+catches "su is setuid"                 "su setuid again"
+catches "system-auth checks a password with pam_unix" "system-auth back on pam_unix"
 catches "two lockers"                   "upstream's omarchy-lock-password planted"
 catches "other sudoers files name moarchy-pin: /etc/sudoers.d/99-planted" \
                                         "a second sudoers file granting moarchy-pin set"

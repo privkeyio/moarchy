@@ -1,39 +1,51 @@
-#!/bin/bash
-# The PIN, which is the account's password. Root only, reached through sudo.
+#!/bin/bash -p
+# The PIN, which is the account's password, and the one place it is checked.
+# Root only.
 #
-#   moarchy-pin check   is this the PIN? The lock screen's only way to ask
+#   moarchy-pin check   is this the PIN? The lock screen asks, through sudo
+#   moarchy-pin pam     the same, for PAM: system-auth calls it in place of
+#                       pam_unix, so sudo, polkit and a console login ask too
 #   moarchy-pin first   the very first PIN, from the lock screen's setup mode
 #   moarchy-pin set     a new PIN, from moarchy-pin-change in a terminal
 #
-# The PIN is one line on stdin and nowhere else: not argv, which every process
-# can read in /proc, and not the environment. It goes to chpasswd the same way,
-# so the hash is whatever the system hashes passwords with.
+# The PIN is on stdin and nowhere else: not argv, which every process can read
+# in /proc, and not the environment. It goes to chpasswd the same way, so the
+# hash is whatever the system hashes passwords with.
 #
-# `check` and `first` are what /etc/sudoers.d/20-moarchy-pin lets the wheel
-# group run with no password, because the lock screen has no PIN to give sudo.
+# **Why one door.** A six-digit PIN is a million guesses, and the PIN is also
+# what sudo asks for. Anything that can test it uncounted is root at the end
+# of about an hour of yescrypt across eight cores. So every check comes here,
+# where a count only root can write pauses entry after every tenth wrong PIN,
+# for two minutes and doubling to an hour, and checks run one at a time:
 #
-# **Why the lock screen asks this and not PAM.** A six-digit PIN is a million
-# guesses, and the PIN is also what sudo asks for. An unprivileged locker checks
-# a password through setuid unix_chkpwd, which any process can call as often as
-# it likes, uncounted: about 40ms a guess, so the whole space in an hour across
-# eight cores, and root at the end of it. So unix_chkpwd loses its setuid bit
-# (default/pacman-hooks/20-moarchy-unix-chkpwd.hook) and this is the one door,
-# with a count only root can write: every tenth wrong PIN pauses entry for two
-# minutes, doubling each time up to a day.
+#   the lock screen       `moarchy-pin check`, the sudo rule in 20-moarchy-pin
+#   sudo, polkit, login   system-auth, through pam_exec (bin/moarchy-harden-auth)
+#   unix_chkpwd, su, chfn, chsh, passwd, ksu
+#                         no setuid bit (bin/moarchy-harden-auth), so they
+#                         cannot check a password for anyone but root
+#
+# A wrong PIN is counted BEFORE it is checked, through a file written whole and
+# synced, and nothing a caller does can stop that: signals are ignored and the
+# resource limits a caller handed down are lifted. A caller that kills or
+# starves the check can only waste its own guess.
 #
 # `first` has to be useless once a PIN exists. It refuses once one has been set
 # (the stamp below), and while the account's password is anything but locked
 # (L) or empty (NP). `set` has no rule of its own and is reached through
 # ordinary sudo, which asks for the current PIN.
 #
-# Exit 0 yes, 1 wrong (stdout: tries left before the next pause), 3 paused
-# (stdout: seconds left), 2 anything else, with one line on stderr.
+# Exit 0 yes, 4 wrong (stdout: tries left before the next pause), 3 paused
+# (stdout: seconds left), 2 anything else, with one line on stderr. Not 1:
+# sudo exits 1 when it cannot run this at all, and that is not a wrong PIN.
 set -uo pipefail
 
+trap '' HUP INT QUIT TERM TSTP TTIN TTOU USR1 USR2 PIPE XFSZ
 # Run as root with the caller's environment otherwise intact, so a PATH the
 # caller chose must not decide which chpasswd or passwd runs.
 if (( EUID == 0 )); then
   export PATH=/usr/bin
+  ulimit -H -f unlimited -t unlimited -v unlimited 2>/dev/null
+  ulimit -S -f unlimited -t unlimited -v unlimited 2>/dev/null
 fi
 
 # Its own directory: /var/lib/moarchy is shared with first boot and pacman
@@ -48,39 +60,67 @@ STAMP=/var/lib/moarchy/pin-set
 die() { echo "${0##*/}: $*" >&2; exit 2; }
 
 mode=${1:-}
-[[ $mode == check || $mode == first || $mode == set ]] || die "usage: ${0##*/} check|first|set (the PIN on stdin)"
+[[ $mode =~ ^(check|pam|first|set)$ ]] || die "usage: ${0##*/} check|pam|first|set (the PIN on stdin)"
 (( EUID == 0 )) || die "run it through sudo"
 
-user=${SUDO_USER:-}
-[[ -n $user && $user != root ]] || die "no SUDO_USER to set a PIN for"
+if [[ $mode == pam ]]; then
+  [[ ${PAM_TYPE:-} == auth ]] || die "pam is for system-auth's auth stack"
+  user=${PAM_USER:-}
+else
+  user=${SUDO_USER:-}
+fi
+[[ -n $user && $user != root ]] || die "no user to check a PIN for"
 getent passwd "$user" >/dev/null || die "no such user: $user"
 
 # Read before taking the lock, and with a deadline, so a caller that never
-# writes cannot hold the lock and keep the lock screen from asking.
+# writes cannot hold the lock and keep the lock screen from asking. pam_exec
+# sends the PIN with no newline, which `read` reports as end of file.
 IFS= read -r -t 10 pin || [[ -n ${pin:-} ]] || die "no PIN on stdin"
 
 install -d -m 700 "$STATE" || die "cannot create $STATE"
 exec 9>"$STATE/pin.lock" || die "cannot open $STATE/pin.lock"
 flock -w 10 9 || die "another PIN check is still running"
 
-if [[ $mode == check ]]; then
+# Whole, synced, then renamed over the old one: a reader never sees half a
+# count, and a power cut cannot roll one back.
+write_guard() {
+  printf '%s %s\n' "$1" "$2" >"$GUARD.tmp" && sync "$GUARD.tmp" &&
+    mv -f "$GUARD.tmp" "$GUARD" && sync "$STATE" || die "cannot record the attempt"
+}
+
+if [[ $mode == check || $mode == pam ]]; then
   now=$(date +%s)
-  read -r failures until 2>/dev/null <"$GUARD" || true
-  [[ ${failures:-} =~ ^[0-9]+$ ]] || failures=0
-  [[ ${until:-} =~ ^[0-9]+$ ]] || until=0
+  failures=0 until=0
+  if [[ -e $GUARD ]]; then
+    read -r failures until <"$GUARD"
+    # Damaged is not zero: a count that cannot be read pauses, rather than
+    # starting over.
+    if [[ ! ${failures:-} =~ ^[0-9]+$ || ! ${until:-} =~ ^[0-9]+$ ]]; then
+      failures=0 until=$(( now + 120 ))
+      write_guard "$failures" "$until"
+    fi
+  fi
   if (( now < until )); then echo $(( until - now )); exit 3; fi
+
+  failures=$(( failures + 1 ))
+  if (( failures % 10 == 0 )); then
+    pause=$(( 120 << (failures / 10 - 1 > 5 ? 5 : failures / 10 - 1) ))
+    (( pause > 3600 )) && pause=3600
+    write_guard "$failures" $(( now + pause ))
+  else
+    pause=0
+    write_guard "$failures" 0
+  fi
 
   # Python only for libcrypt's crypt(), which bash cannot reach and which
   # takes whatever scheme the hash names. It reads the hash itself, so the
   # hash, like the PIN, is never in argv. 0 is a match and 1 is not; anything
-  # else is a check that could not be made, which must not count as a wrong
-  # PIN, or a broken libcrypt would turn every right PIN into a pause.
-  verdict=1
-  if [[ $pin =~ ^[0-9]{6,12}$ ]]; then
-    printf '%s\n' "$pin" | python3 -I -c '
+  # else is a check that could not be made, and is refunded rather than
+  # counted, or a broken libcrypt would turn every right PIN into a pause.
+  printf '%s' "$pin" | python3 -I -c '
 import ctypes, ctypes.util, sys
 try:
-    user, pin = sys.argv[1], sys.stdin.buffer.readline().rstrip(b"\n")
+    user, pin = sys.argv[1], sys.stdin.buffer.read()
     with open("/etc/shadow", "rb") as f:
         hashed = next((l.split(b":")[1] for l in f if l.split(b":")[0] == user.encode()), b"")
     lib = ctypes.util.find_library("crypt")
@@ -89,31 +129,24 @@ try:
     lc = ctypes.CDLL(lib)
     lc.crypt.restype = ctypes.c_char_p
     lc.crypt.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
-    match = hashed[:1] == b"$" and lc.crypt(pin, hashed) == hashed
+    match = 0 < len(pin) <= 512 and b"\0" not in pin and hashed[:1] == b"$" and lc.crypt(pin, hashed) == hashed
 except Exception:
     sys.exit(2)
 sys.exit(0 if match else 1)
 ' "$user"
-    verdict=$?
-  fi
-  (( verdict <= 1 )) || die "could not check the PIN"
+  verdict=$?
   if (( verdict == 0 )); then
-    printf '0 0\n' >"$GUARD"
+    write_guard 0 0
     exit 0
   fi
-
-  sleep 1
-  failures=$(( failures + 1 ))
-  if (( failures % 10 == 0 )); then
-    pause=$(( 120 << (failures / 10 - 1 > 10 ? 10 : failures / 10 - 1) ))
-    (( pause > 86400 )) && pause=86400
-    printf '%s %s\n' "$failures" $(( now + pause )) >"$GUARD"
-    echo "$pause"
-    exit 3
+  if (( verdict != 1 )); then
+    write_guard $(( failures - 1 )) "$until"
+    die "could not check the PIN"
   fi
-  printf '%s 0\n' "$failures" >"$GUARD"
+  sleep 1
+  if (( pause > 0 )); then echo "$pause"; exit 3; fi
   echo $(( 10 - failures % 10 ))
-  exit 1
+  exit 4
 fi
 
 [[ $pin =~ ^[0-9]{6,12}$ ]] || die "a PIN is 6 to 12 digits"
@@ -127,4 +160,4 @@ fi
 
 printf '%s:%s\n' "$user" "$pin" | chpasswd || die "chpasswd could not set the PIN"
 install -m 644 /dev/null "$STAMP" || die "the PIN is set, but its stamp could not be written"
-printf '0 0\n' >"$GUARD"
+write_guard 0 0

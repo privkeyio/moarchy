@@ -197,8 +197,9 @@ pkgver=$_ver
 #    on; they are reached over the USB link instead (image/configure.sh).
 # 11: the lock screen. The moarchy.lock plugin, bin/moarchy-pin with the
 #     sudoers rule for checking a PIN and setting the first one,
-#     bin/moarchy-pin-change, the pacman hook that takes unix_chkpwd's setuid
-#     bit, and the power button, the idle timeout and Settings > Power > Lock
+#     bin/moarchy-pin-change, bin/moarchy-harden-auth and its pacman hook
+#     (system-auth through moarchy-pin, no setuid on the programs that would
+#     check a password uncounted), and the power button, the idle timeout and Settings > Power > Lock
 #     taking a real lock (docs/structure.md I8, docs/gestures.md Q11). A phone
 #     holding 0.5.0-10 blanks its panel and never locks.
 pkgrel=11
@@ -485,10 +486,10 @@ package() {
   install -dm750 "$pkgdir/etc/sudoers.d"
   install -m440 "$_repo/default/sudoers/20-moarchy-pin" "$pkgdir/etc/sudoers.d/20-moarchy-pin"
 
-  # unix_chkpwd loses its setuid bit, so the only uncounted way to test a PIN
-  # goes; the hook says why nothing on the phone needs it.
-  install -Dm644 "$_repo/default/pacman-hooks/20-moarchy-unix-chkpwd.hook" \
-    "$pkgdir/usr/share/libalpm/hooks/20-moarchy-unix-chkpwd.hook"
+  # One door to the PIN, put back after any upgrade that would undo it;
+  # bin/moarchy-harden-auth says what that means.
+  install -Dm644 "$_repo/default/pacman-hooks/20-moarchy-harden-auth.hook" \
+    "$pkgdir/usr/share/libalpm/hooks/20-moarchy-harden-auth.hook"
 
   # The torch tile's permission. 73 so it runs after feedbackd's 72, which
   # tries to do this and cannot on Arch -- the rule's own header has the whole
