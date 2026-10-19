@@ -3,6 +3,7 @@
 #
 #   ./scripts/verify-image.sh                 # newest artifact in images/
 #   ./scripts/verify-image.sh path/to/moarchy-sargo-<ver>-<date>
+#   DEV_IMAGE=1 ./scripts/verify-image.sh ...  # a MOARCHY_SSH_KEY dev image
 #
 # Structure, contents and the two first-boot scripts. It cannot prove the phone
 # boots -- that needs the phone -- but everything short of the hardware is here.
@@ -44,5 +45,6 @@ docker build --platform linux/arm64 -f image/Dockerfile -t moarchy-image . >/dev
 # behavioural checks run in.
 docker run --rm --privileged --platform linux/arm64 \
   -v "$(dirname "$IMAGE_ABS")":/img:ro \
+  -e "DEV_IMAGE=${DEV_IMAGE:-0}" \
   --entrypoint bash moarchy-image \
   /repo/image/verify.sh "/img/$(basename "$IMAGE_ABS")"

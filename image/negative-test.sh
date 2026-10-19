@@ -69,6 +69,9 @@ echo 'Server = http://mirror.archlinuxarm.org/$arch/$repo' >> $W/r/etc/pacman.d/
 # 11. turn the mDNS responder back on behind the image's back
 mkdir -p $W/r/etc/systemd/resolved.conf.d
 printf '[Resolve]\nMulticastDNS=yes\n' > $W/r/etc/systemd/resolved.conf.d/99-planted.conf
+# 12. the USB dev link's sshd drop-in, in an image that is not a dev image
+mkdir -p $W/r/etc/ssh/sshd_config.d
+printf 'ListenAddress 10.66.0.2\n' > $W/r/etc/ssh/sshd_config.d/20-moarchy-usbnet.conf
 umount $W/r
 
 echo "==> re-sparsing"
@@ -109,6 +112,7 @@ catches "not enabled in either tree: system/sysinit.target.wants/moarchy-grow-ro
 catches "share one pacman master key"  "a pacman keyring shipped in the image"
 catches "plain-HTTP Server line"       "a plain-HTTP Arch Linux ARM mirror"
 catches "LLMNR or mDNS re-enabled"     "an mDNS responder turned back on"
+catches "USB dev link is in this image" "the USB dev link in a release image"
 
 echo
 if [ $rc -ne 0 ]; then ok "verify.sh exited non-zero ($rc)"; else no "verify.sh exited 0 on a broken image"; fi

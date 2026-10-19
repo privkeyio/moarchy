@@ -436,29 +436,73 @@ for acct in moarchy root; do
     *)             no "$acct has a real password hash -- the image ships a credential" ;;
   esac
 done
-[ -e "$R/etc/moarchy-debug-image" ] && no "this is a DEBUG image -- do not publish" \
-                                    || ok "not a debug image"
-# An authorized_keys in a PUBLISHED image would make every phone that flashes it
-# trust one person's key. A public key is not a secret, which is why this is easy
-# to wave through and worth checking for anyway.
-if [ -s "$R/home/moarchy/.ssh/authorized_keys" ]; then
-  no "an ssh key is authorised in this image -- everyone who flashes it would trust it"
-else
-  ok "no ssh key authorised (nobody but the owner can log in)"
-fi
-# /etc only. The mobile-data profile checked further up ships in /usr/lib and
-# is not a credential -- it names no operator, no APN and no password, and gets
-# all three from the SIM at runtime. A profile HERE was put here by somebody's
-# build, and the only ones that exist are a debug image's wifi and its psk.
-np=$(ls -1 "$R"/etc/NetworkManager/system-connections/ 2>/dev/null | wc -l)
-[ "$np" = 0 ] && ok "no preseeded network profiles in /etc" || no "$np network profile(s) baked in"
 # -L too: an absolute symlink here would read as absent to -e, turning "sshd is
 # enabled" into a silent pass -- the direction that matters for a published image.
-if [ -e "$R/etc/systemd/system/multi-user.target.wants/sshd.service" ] ||
-   [ -L "$R/etc/systemd/system/multi-user.target.wants/sshd.service" ]; then
-  no "sshd is enabled"
+_sshd_on() {
+  [ -e "$R/etc/systemd/system/multi-user.target.wants/sshd.service" ] ||
+    [ -L "$R/etc/systemd/system/multi-user.target.wants/sshd.service" ]
+}
+# The USB dev link configure.sh writes for MOARCHY_SSH_KEY: the gadget, its
+# unit, sshd's binding to it, and NetworkManager's hands-off.
+_usbnet="/usr/local/sbin/moarchy-usbnet
+/etc/systemd/system/moarchy-usbnet.service
+/etc/systemd/system/sshd.service.d/20-moarchy-usbnet.conf
+/etc/ssh/sshd_config.d/20-moarchy-usbnet.conf
+/etc/NetworkManager/conf.d/90-moarchy-usbnet.conf"
+_ak="$R/home/moarchy/.ssh/authorized_keys"
+np=$(ls -1 "$R"/etc/NetworkManager/system-connections/ 2>/dev/null | wc -l)
+
+if [ "${DEV_IMAGE:-0}" != 1 ]; then
+  [ -e "$R/etc/moarchy-debug-image" ] && no "this is a DEBUG image -- do not publish" \
+                                      || ok "not a debug image"
+  # An authorized_keys in a PUBLISHED image would make every phone that flashes
+  # it trust one person's key. A public key is not a secret, which is why this
+  # is easy to wave through and worth checking for anyway.
+  [ -s "$_ak" ] && no "an ssh key is authorised in this image -- everyone who flashes it would trust it" \
+                || ok "no ssh key authorised (nobody but the owner can log in)"
+  # /etc only. The mobile-data profile checked further up ships in /usr/lib and
+  # is not a credential -- it names no operator, no APN and no password, and
+  # gets all three from the SIM at runtime. A profile HERE was put here by
+  # somebody's build, and the only ones that exist are a debug image's wifi and
+  # its psk.
+  [ "$np" = 0 ] && ok "no preseeded network profiles in /etc" || no "$np network profile(s) baked in"
+  _sshd_on && no "sshd is enabled" || ok "sshd not enabled"
+  # In a published image the link's sshd drop-in would admit whoever is on the
+  # far end of a cable.
+  _found=""
+  for _f in $_usbnet; do { [ -e "$R$_f" ] || [ -L "$R$_f" ]; } && _found="$_found $_f"; done
+  [ -z "$_found" ] && ok "no USB dev link" || no "the USB dev link is in this image:$_found"
 else
-  ok "sshd not enabled"
+  # DEV_IMAGE=1: a debug image built with MOARCHY_SSH_KEY. Its whole job is the
+  # way in, and that way in must be the USB cable and nothing else.
+  [ -e "$R/etc/moarchy-debug-image" ] && ok "a debug image, as DEV_IMAGE=1 expects" \
+                                      || no "DEV_IMAGE=1 but no debug marker -- this is not a dev image"
+  if [ ! -s "$_ak" ]; then
+    no "no ssh key authorised -- a dev image nobody can log in to"
+  elif grep -v '^[[:space:]]*$' "$_ak" | grep -qEv '^(ssh-|ecdsa-|sk-)' || grep -qi 'PRIVATE KEY' "$_ak"; then
+    no "authorized_keys holds something other than public keys"
+  else
+    ok "$(grep -c . "$_ak") public key(s) authorised"
+  fi
+  ok "$np preseeded network profile(s) (allowed in a dev image)"
+  _sshd_on && ok "sshd enabled" || no "sshd not enabled -- a dev image with no way in"
+  _missing=""
+  for _f in $_usbnet; do [ -e "$R$_f" ] || _missing="$_missing $_f"; done
+  [ -z "$_missing" ] && ok "the USB dev link is installed" || no "the USB dev link is incomplete:$_missing"
+  [ -x "$R/usr/local/sbin/moarchy-usbnet" ] || no "moarchy-usbnet is not executable"
+  [ -L "$R/etc/systemd/system/multi-user.target.wants/moarchy-usbnet.service" ] \
+    && ok "moarchy-usbnet.service enabled" || no "moarchy-usbnet.service not enabled"
+  grep -qx 'Requires=moarchy-usbnet.service' "$R/etc/systemd/system/sshd.service.d/20-moarchy-usbnet.conf" 2>/dev/null \
+    && ok "sshd requires the USB link" || no "sshd does not require the USB link -- it could start without it"
+  # Every ListenAddress and AllowUsers sshd reads, from the main file and every
+  # drop-in: only the cable's.
+  _sc=$(cat "$R/etc/ssh/sshd_config" "$R"/etc/ssh/sshd_config.d/*.conf 2>/dev/null | sed 's/#.*//')
+  _la=$(printf '%s\n' "$_sc" | awk 'tolower($1) == "listenaddress" { print $2 }' | sort -u | tr '\n' ' ')
+  _au=$(printf '%s\n' "$_sc" | awk 'tolower($1) == "allowusers" { $1 = ""; print }' | sed 's/^ //')
+  [ "$_la" = "10.66.0.2 " ] && ok "sshd listens on 10.66.0.2 only" \
+                           || no "sshd listens on '${_la:-every address}', not 10.66.0.2 alone"
+  [ "$_au" = "moarchy@10.66.0.1" ] && ok "sshd admits moarchy from 10.66.0.1 only" \
+                                  || no "sshd AllowUsers is '${_au:-unset}', not moarchy@10.66.0.1 alone"
 fi
 grep -qi '^PasswordAuthentication no' "$R/etc/ssh/sshd_config.d/10-moarchy.conf" 2>/dev/null \
   && ok "sshd password auth disabled" || no "sshd password auth not disabled"

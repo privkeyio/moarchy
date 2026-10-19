@@ -113,6 +113,20 @@ jobs:
         run: |
           ( cd "$ART" && sha256sum ./* > SHA256SUMS && cat SHA256SUMS )
 
+      # The dev image (MOARCHY_SSH_KEY) with a key made for this run and thrown
+      # away with the runner, verified as one, and never uploaded. Built outside
+      # the tree, which build-image.sh would otherwise call dirty.
+      - name: Dev image
+        run: |
+          set -o pipefail
+          ssh-keygen -q -t ed25519 -N '' -C ci-throwaway -f "$RUNNER_TEMP/dev"
+          MOARCHY_SSH_KEY="$RUNNER_TEMP/dev.pub" OUTDIR="$RUNNER_TEMP/dev-images" \
+            ./scripts/build-image.sh 2>&1 | tee -a "$LOG"
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/dev-images"
+          dev=$(ls -td "$RUNNER_TEMP"/dev-images/moarchy-sargo-*/ | head -1)
+          DEV_IMAGE=1 ./scripts/verify-image.sh "${dev%/}" 2>&1 | tee -a "$LOG"
+          sudo rm -rf "$RUNNER_TEMP/dev-images"
+
       # Not for a pull request from another repository: an unsigned, flashable
       # image built from someone else's code should not sit here under a
       # neutral name.
