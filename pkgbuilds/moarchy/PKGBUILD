@@ -187,7 +187,10 @@ pkgver=$_ver
 #    the phone. The image stops carrying one, because a keyring built into the
 #    image is one master secret key shared by every phone flashed from it.
 #    moarchy.install replaces such a keyring on phones flashed before this.
-pkgrel=7
+# 8: the plugins say `Commons.Color`, not `Color`. QtQuick 6.12 brings its own
+#    `Color`, which shadows the qs.Commons singleton, and every moarchy surface
+#    rendered black (omarchy-config 7 carries the same rewrite for the shell).
+pkgrel=8
 pkgdesc="Omarchy's look, keybindings and theming on a phone, under Hyprland"
 arch=('any')
 url='https://github.com/SimonSchubert/moarchy'
