@@ -1,0 +1,16 @@
+# One door to the PIN, made sure of at every boot (bin/moarchy-harden-auth).
+# The pacman hook does it after every upgrade that touches it; this covers an
+# upgrade interrupted between unpacking and the hook, which would otherwise
+# leave a setuid su or a pam_unix system-auth until the next transaction.
+[Unit]
+Description=moarchy: every PIN check through moarchy-pin
+DefaultDependencies=no
+After=local-fs.target
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/moarchy/bin/moarchy-harden-auth
+
+[Install]
+WantedBy=sysinit.target

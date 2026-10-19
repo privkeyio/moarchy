@@ -29,13 +29,14 @@ function canLock(mode) {
 // At shell start, from the state file the last shell left in $XDG_RUNTIME_DIR.
 //
 //   none    it said unlocked: a shell restart, and the user stays unlocked
-//   relock  it said locked: a restart while locked, panel left as it is
+//   relock  it said locked, or locking: a restart while locked, panel left as
+//           it is
 //   boot    no file, which tmpfs means a fresh boot: lock, and light the panel
 //           autostart.lua blanked until the lock was up
 function startupAction(text) {
   var t = String(text || "").trim()
   if (t === "unlocked") return "none"
-  if (t === "locked") return "relock"
+  if (t === "locked" || t === "locking") return "relock"
   return "boot"
 }
 

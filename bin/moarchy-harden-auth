@@ -6,6 +6,7 @@
 #      so sudo, polkit and a console login are counted and paused with the lock
 #      screen, one check at a time. pam_unix in the same stack would let N
 #      sudo processes started together take N guesses per faillock window.
+#      `stdout` so moarchy-pin can tell sudo a pause from a typo.
 #   2. No setuid bit on the programs that check a password through PAM stacks
 #      of their own, uncounted: unix_chkpwd (how an unprivileged locker checks
 #      one), su, chfn, chsh (pam_unix straight, no faillock), passwd (which
@@ -13,25 +14,48 @@
 #      still work; nothing on the phone runs them as the user. The PIN is
 #      changed through `moarchy-pin set` (Settings > Change PIN).
 #
-# Run by image/configure.sh, by moarchy's install script, and by the pacman
-# hook default/pacman-hooks/20-moarchy-harden-auth.hook whenever pam, shadow,
-# util-linux, krb5 or pambase reinstall any of it. image/verify.sh fails an
-# image where either is undone.
+#   moarchy-harden-auth --undo   pambase's pam_unix line back, before moarchy
+#                                is removed: a system-auth naming a helper
+#                                that is gone is no sudo, no polkit and no
+#                                login on a phone whose root is locked
+#
+# Run by image/configure.sh, at every boot (moarchy-harden-auth.service), and
+# by the pacman hooks in default/pacman-hooks: 20-moarchy-harden-auth.hook
+# whenever pam, shadow, util-linux, krb5, pambase or moarchy reinstall any of
+# it, and 20-moarchy-harden-auth-remove.hook for --undo. image/verify.sh reads LINE and CHECKERS out of this file and fails
+# an image where either is undone.
 set -euo pipefail
 export PATH=/usr/bin
 
 die() { echo "${0##*/}: $*" >&2; exit 1; }
 (( EUID == 0 )) || die "run it as root"
 
-for f in unix_chkpwd su chfn chsh passwd ksu; do
+SA=/etc/pam.d/system-auth
+LINE='auth       [success=1 default=bad]     pam_exec.so          quiet quiet_log stdout expose_authtok seteuid /usr/lib/moarchy/bin/moarchy-pin pam'
+# pambase's own line, as it has read since pam_faillock replaced pam_tally2.
+PAMBASE='auth       [success=1 default=bad]     pam_unix.so          try_first_pass nullok'
+CHECKERS='unix_chkpwd su chfn chsh passwd ksu'
+
+if [[ ${1:-} == --undo ]]; then
+  grep -qxF "$LINE" "$SA" || exit 0
+  sed -i "s|^$(printf '%s' "$LINE" | sed 's/[][\.|*^$]/\\&/g')\$|$PAMBASE|" "$SA"
+  grep -qxF "$PAMBASE" "$SA" || die "could not put pam_unix back in $SA"
+  exit 0
+fi
+
+for f in $CHECKERS; do
   if [[ -e /usr/bin/$f ]]; then chmod u-s,g-s "/usr/bin/$f"; fi
 done
 
-SA=/etc/pam.d/system-auth
-LINE='auth       [success=1 default=bad]     pam_exec.so          quiet quiet_log expose_authtok seteuid /usr/lib/moarchy/bin/moarchy-pin pam'
-grep -qxF "$LINE" "$SA" && exit 0
-# pambase's own line, as it has read since pam_faillock replaced pam_tally2.
-# Anything else is a system-auth this does not know, and is left alone, loudly.
+# Done only when ours is there and pam_unix checks nothing else in it: a
+# pacdiff merge that kept both would still answer guesses uncounted.
+if grep -qxF "$LINE" "$SA"; then
+  grep -qE '^\s*-?auth\s.*pam_unix\.so' "$SA" &&
+    die "$SA has moarchy-pin and still checks with pam_unix; PIN checks through it are NOT all counted"
+  exit 0
+fi
+# Anything but pambase's line is a system-auth this does not know, and is left
+# alone, loudly.
 grep -qE '^auth\s+\[success=1 default=bad\]\s+pam_unix\.so\s+try_first_pass\s+nullok\s*$' "$SA" ||
   die "$SA has no pam_unix auth line in the shape this replaces; PIN checks through it are NOT counted"
 sed -i -E "s|^auth\s+\[success=1 default=bad\]\s+pam_unix\.so\s+try_first_pass\s+nullok\s*$|$LINE|" "$SA"

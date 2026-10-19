@@ -1,0 +1,15 @@
+# pambase's pam_unix line back in system-auth before moarchy, and with it
+# moarchy-pin, is removed. Left naming a helper that is gone, system-auth fails
+# every check: no sudo, no polkit and no login, on a phone whose root is
+# locked and whose su has no setuid bit. The setuid bits stay off; nothing on
+# the phone needs them.
+[Trigger]
+Operation = Remove
+Type = Package
+Target = moarchy
+
+[Action]
+Description = Putting pam_unix back in system-auth before moarchy-pin goes...
+When = PreTransaction
+Exec = /usr/lib/moarchy/bin/moarchy-harden-auth --undo
+AbortOnFail

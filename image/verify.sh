@@ -444,15 +444,52 @@ done
 # One door to the PIN (bin/moarchy-harden-auth). Any other way to test it, at
 # yescrypt's speed and uncounted, is root in about an hour, because the PIN is
 # also the sudo password.
-_suid=$(for _b in unix_chkpwd su chfn chsh passwd ksu; do
-  [ -n "$(find "$R/usr/bin/$_b" -perm /6000 2>/dev/null)" ] && printf '%s ' "$_b"; done)
-[ -z "$_suid" ] && ok "no setuid password checker but sudo (PIN checks are counted)" \
-                || no "$_suid is setuid -- any process can guess the PIN uncounted"
-_sa="$R/etc/pam.d/system-auth"
-grep -qxF 'auth       [success=1 default=bad]     pam_exec.so          quiet quiet_log expose_authtok seteuid /usr/lib/moarchy/bin/moarchy-pin pam' "$_sa" 2>/dev/null &&
-  ! grep -qE '^\s*-?auth\s.*pam_unix\.so' "$_sa" \
-  && ok "system-auth checks the PIN through moarchy-pin (sudo and polkit are counted)" \
-  || no "system-auth checks a password with pam_unix -- sudo can guess the PIN uncounted, in parallel"
+# What it must be, read out of the script that makes it so, so the two cannot
+# drift apart.
+_ha="$R/usr/lib/moarchy/bin/moarchy-harden-auth"
+_line=$(sed -n "s/^LINE='\(.*\)'$/\1/p" "$_ha" 2>/dev/null)
+_checkers=$(sed -n "s/^CHECKERS='\(.*\)'$/\1/p" "$_ha" 2>/dev/null)
+if [ -z "$_line" ] || [ -z "$_checkers" ]; then
+  no "moarchy-harden-auth is missing, or no longer says LINE= and CHECKERS= -- nothing here can check the one door"
+else
+  _suid=$(for _b in $_checkers; do
+    [ -n "$(find "$R/usr/bin/$_b" -perm /6000 2>/dev/null)" ] && printf '%s ' "$_b"; done)
+  _suid=${_suid% }
+  [ -z "$_suid" ] && ok "no setuid password checker but sudo (PIN checks are counted)" \
+                  || no "$_suid is setuid -- any process can guess the PIN uncounted"
+  _sa="$R/etc/pam.d/system-auth"
+  grep -qxF "$_line" "$_sa" 2>/dev/null && ! grep -qE '^\s*-?auth\s.*pam_unix\.so' "$_sa" \
+    && ok "system-auth checks the PIN through moarchy-pin (sudo and polkit are counted)" \
+    || no "system-auth checks a password with pam_unix -- sudo can guess the PIN uncounted, in parallel"
+fi
+# polkit checks in a sandbox where /var/lib is read-only; without this every
+# polkit prompt fails, because moarchy-pin cannot count the attempt.
+grep -qx 'ReadWritePaths=-/var/lib/moarchy/pin' \
+    "$R/usr/lib/systemd/system/polkit-agent-helper@.service.d/50-moarchy-pin.conf" 2>/dev/null &&
+  grep -qx 'd /var/lib/moarchy/pin 0700 root root -' "$R/usr/lib/tmpfiles.d/moarchy-pin.conf" 2>/dev/null \
+  && ok "polkit's agent helper can write the PIN's count, and boot makes its directory" \
+  || no "polkit's agent helper cannot write the PIN's count -- every polkit prompt fails"
+have /usr/share/libalpm/hooks/20-moarchy-harden-auth.hook
+have /usr/share/libalpm/hooks/20-moarchy-harden-auth-remove.hook
+have /usr/lib/systemd/system/sysinit.target.wants/moarchy-harden-auth.service
+# Any PAM stack that checks a password with pam_unix itself, rather than
+# through system-auth, is another door. Only those whose program cannot run
+# as root for anyone else are allowed one, and only while that holds.
+_doors=""
+for _p in "$R"/etc/pam.d/* "$R"/usr/lib/pam.d/*; do
+  [ -f "$_p" ] && grep -qE '^\s*-?auth\s.*pam_unix\.so' "$_p" || continue
+  _n=${_p##*/}
+  case $_n in
+    su|su-l) _prog=su ;;
+    chfn|chsh|vlock) _prog=$_n ;;
+    *) _doors="$_doors ${_p#$R}"; continue ;;
+  esac
+  [ -n "$(find "$R/usr/bin/$_prog" -perm /6000 2>/dev/null)" ] && _doors="$_doors ${_p#$R}"
+done
+[ -z "$_doors" ] && ok "no PAM stack checks a password outside moarchy-pin" \
+                 || no "a PAM stack checks a password uncounted:$_doors"
+grep -qx 'NAutoVTs=0' "$R/etc/systemd/logind.conf.d/20-no-spare-consoles.conf" 2>/dev/null \
+  && ok "no login prompt on a spare console" || no "logind offers a login prompt on tty2-tty6"
 # Upstream's name. Its own lock plugin arms itself when this file exists, and
 # two ext-session-lock clients fighting over one session is a phone neither of
 # them can unlock.
@@ -466,10 +503,10 @@ grep -qxF 'auth       [success=1 default=bad]     pam_exec.so          quiet qui
 _sud="$R/etc/sudoers.d/20-moarchy-pin"
 if [ ! -f "$_sud" ]; then
   no "/etc/sudoers.d/20-moarchy-pin missing -- the lock screen can neither check nor set a PIN"
-elif printf '%%wheel ALL=(root) NOPASSWD: /usr/lib/moarchy/bin/moarchy-pin check, /usr/lib/moarchy/bin/moarchy-pin first\n' | cmp -s - "$_sud"; then
-  ok "20-moarchy-pin is exactly the check and first-PIN rule"
+elif printf '%%wheel ALL=(root) NOPASSWD: /usr/lib/moarchy/bin/moarchy-pin check, /usr/lib/moarchy/bin/moarchy-pin first, /usr/lib/moarchy/bin/moarchy-pin state\n' | cmp -s - "$_sud"; then
+  ok "20-moarchy-pin is exactly the check, first-PIN and state rule"
 else
-  no "20-moarchy-pin is not exactly the check and first-PIN rule -- a widened rule is root without a PIN"
+  no "20-moarchy-pin is not exactly the check, first-PIN and state rule -- a widened rule is root without a PIN"
 fi
 # And no other sudoers file may name the helper: `moarchy-pin set` granted
 # anywhere without a password is a new PIN, and root, for anyone.

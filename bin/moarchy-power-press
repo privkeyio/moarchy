@@ -22,8 +22,8 @@
 # While the session is locked a press only toggles the panel (Q11e). There is
 # nothing to lock and nothing a trigger could open in front of the lock.
 # Locked is read off the state file moarchy.lock writes in $XDG_RUNTIME_DIR,
-# so the answer costs no IPC round trip. Anything but `unlocked` -- no lock
-# running, a phone with no PIN yet -- is treated the same: the panel only.
+# so the answer costs no IPC round trip: `unlocked`, `locked` once the lock is
+# secure, `locking` before that.
 #
 # A file and not a daemon: the binding is `exec`, so each press is a new process
 # with nothing carried over but what is on disk. Two timestamps in one file
@@ -49,7 +49,22 @@ LOCK_AFTER=0.55
 
 now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
 
-[[ $(cat "$LOCK_STATE" 2>/dev/null) == unlocked ]] || exec moarchy-screen toggle
+# While a lock is being taken (`locking`, or no file at all in the seconds
+# after boot) the session is still reachable under it, so a press must not
+# wake the touchscreen. Wait a moment for the lock to come up; if it does not,
+# light the panel and nothing else, and moarchy.lock lights the rest once its
+# lock is secure.
+state=$(cat "$LOCK_STATE" 2>/dev/null)
+for _ in $(seq 30); do
+  [[ $state == locked || $state == unlocked ]] && break
+  sleep 0.1
+  state=$(cat "$LOCK_STATE" 2>/dev/null)
+done
+case $state in
+  unlocked) ;;
+  locked)   exec moarchy-screen toggle ;;
+  *)        exec moarchy-screen light ;;
+esac
 
 mkdir -p "$STATE_DIR"
 now=$(now_ms)

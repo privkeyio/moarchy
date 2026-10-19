@@ -18,7 +18,8 @@ printf 'tester:246813\n' | chpasswd
 printf '%%wheel ALL=(ALL:ALL) ALL\n' >/etc/sudoers.d/10-wheel
 chmod 440 /etc/sudoers.d/10-wheel
 install -Dm755 "$REPO/bin/moarchy-pin" /usr/lib/moarchy/bin/moarchy-pin
-G=/var/lib/moarchy/pin/pin-guard
+install -m440 "$REPO/default/sudoers/20-moarchy-pin" /etc/sudoers.d/20-moarchy-pin
+G=/var/lib/moarchy/pin/guard-$(id -u tester)
 
 fail=0
 expect() {
@@ -41,17 +42,31 @@ expect "control: so does su" "$(as_tester "$SU")" "0"
 fresh
 expect "sudo takes the right PIN" "$(as_tester 'printf "246813\n" | sudo -S -k -p "" true')" "0"
 expect "sudo refuses a wrong one" "$(as_tester 'printf "111111\n" | sudo -S -k -p "" true')" "1"
-expect "and the wrong one is in moarchy-pin's count" "$(cat "$G")" "1 0"
-expect "the right PIN resets it" "$(as_tester 'printf "246813\n" | sudo -S -k -p "" true') $(cat "$G")" "0 0 0"
+expect "and the wrong one is in moarchy-pin's count" "$(cut -d' ' -f1,2 "$G")" "1 0"
+msg=$(su tester -s /bin/bash -c 'printf "111111\n" | sudo -S -k -p "" true' 2>&1 </dev/null)
+expect "and sudo says why, in the helper's words" "$(grep -c 'Wrong PIN' <<<"$msg")" "1"
+expect "the right PIN resets it" "$(as_tester 'printf "246813\n" | sudo -S -k -p "" true') $(cut -d' ' -f1,2 "$G")" "0 0 0"
 
 # The tenth wrong PIN through sudo pauses everything, the lock screen's
 # keypad included: one count, whichever door the guess came in by.
-fresh; printf '9 0\n' >"$G"
+fresh; install -d -m 700 "${G%/*}"; printf '9 0 %s 0\n' "$(cat /proc/sys/kernel/random/boot_id)" >"$G"
 expect "the tenth wrong PIN through sudo pauses entry" "$(as_tester 'printf "111111\n" | sudo -S -k -p "" true') $(cut -d' ' -f1 "$G")" "1 10"
 faillock --user tester --reset
 expect "a paused count refuses sudo the right PIN" "$(as_tester 'printf "246813\n" | sudo -S -k -p "" true')" "1"
+msg=$(su tester -s /bin/bash -c 'printf "246813\n" | sudo -S -k -p "" true' 2>&1 </dev/null)
+expect "and says it is a pause, not a typo" "$(grep -c 'Too many wrong PINs' <<<"$msg")" "1"
 out=$(printf '246813\n' | SUDO_USER=tester /usr/lib/moarchy/bin/moarchy-pin check); rc=$?
 expect "and the lock screen's check too" "$rc" "3"
+
+# What the lock screen asks to choose a keypad, a setup screen or no lock:
+# root's answer, through the narrow rule, since passwd cannot read shadow as
+# the user any more.
+expect "state, as the lock screen asks it" "$(su tester -s /bin/bash -c 'sudo -n /usr/lib/moarchy/bin/moarchy-pin state' </dev/null 2>&1)" "P"
+expect "and passwd -S as the user could not have told it" "$(su tester -s /bin/bash -c 'passwd -S tester' </dev/null 2>/dev/null | cut -d' ' -f2)" "P"
+passwd -l tester >/dev/null
+expect "state of a locked password is L, which the user's passwd -S misses" \
+  "$(su tester -s /bin/bash -c 'sudo -n /usr/lib/moarchy/bin/moarchy-pin state' </dev/null 2>&1) $(su tester -s /bin/bash -c 'passwd -S tester' </dev/null 2>/dev/null | cut -d' ' -f2)" "L P"
+printf 'tester:246813\n' | chpasswd
 
 # The doors that are shut: none of these can check tester's PIN for tester.
 fresh

@@ -20,7 +20,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HELPER="$ROOT/bin/moarchy-pin"
 
 WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
+# Under the sudo backend the helper is really root, and what it makes (its
+# count, the stamp) is root's, as on the phone. So the test reaches those
+# files through `asroot`, and cleans up the same way.
+trap 'asroot rm -rf "$WORK"' EXIT
 U=$(id -un)
 mkdir -p "$WORK/varlib" "$WORK/stub"
 
@@ -71,6 +74,7 @@ else
   echo "FAIL: needs bwrap with user namespaces, or passwordless sudo"
   exit 1
 fi
+asroot() { if [[ $backend == sudo ]]; then sudo -n "$@"; else "$@"; fi; }
 
 # What the helper is run with: the caller's environment, and whatever the
 # caller wrapped it in (a resource limit, say). `env -i` so nothing of this
@@ -106,8 +110,12 @@ expect() {
   if [[ $2 == $3 ]]; then printf '  PASS  %s\n' "$1"
   else printf '  FAIL  %s: got "%s", want "%s"\n' "$1" "$2" "$3"; fail=$((fail + 1)); fi
 }
-G="$WORK/varlib/moarchy/pin/pin-guard"
-guard() { cat "$G"; }
+G="$WORK/varlib/moarchy/pin/guard-$(id -u)"
+# The count is `failures until boot pause`; the tests read and seed the first
+# two, against this boot.
+guard() { asroot cut -d' ' -f1,2 "$G"; }
+put() { printf '%s' "$1" | asroot tee "$2" >/dev/null; }
+seed() { put "$(printf '%s %s %s %s\n' "$1" "$2" "$(cat /proc/sys/kernel/random/boot_id)" "${3:-0}")" "$G"; }
 
 expect "the right PIN" "$(run check $'246813\n')" "rc=0 out= err="
 expect "a wrong PIN counts down" "$(run check $'111111\n')" "rc=4 out=9 err="
@@ -116,19 +124,31 @@ expect "the right PIN resets the count" "$(run check $'246813\n')" "rc=0 out= er
 for _ in 1 2 3 4 5 6 7 8 9; do run check $'111111\n' >/dev/null; done
 expect "the tenth wrong PIN pauses for two minutes" "$(run check $'111111\n')" "rc=3 out=120 err="
 expect "a pause refuses even the right PIN" "$(run check $'246813\n')" "rc=3 out=1* err="
-read -r f _ <"$G"; printf '%s 1\n' "$f" >"$G"
+read -r f _ < <(asroot cat "$G"); seed "$f" 1 120
 for _ in 1 2 3 4 5 6 7 8 9; do run check $'111111\n' >/dev/null; done
 expect "the twentieth pauses twice as long" "$(run check $'111111\n')" "rc=3 out=240 err="
-printf '9999 1\n' >"$G"
+seed 9999 1
 expect "the pause stops doubling at an hour" "$(run check $'111111\n')" "rc=3 out=3600 err="
-printf '0 0\n' >"$G"
+seed 0 0
 
 # A guard that cannot be read pauses; it does not start the count over.
-printf 'garbage\n' >"$G"
+put $'garbage\n' "$G"
 expect "a damaged count pauses rather than resetting" "$(run check $'246813\n')" "rc=3 out=120 err="
-: >"$G"
+put $'0 0\n' "$G"
+expect "so does one with fields missing" "$(run check $'246813\n')" "rc=3 out=120 err="
+put '' "$G"
 expect "so does an empty one" "$(run check $'246813\n')" "rc=3 out=120 err="
-printf '0 0\n' >"$G"
+seed 0 0
+
+# A pause outlives a reboot: the clock it runs on restarts with the phone, so
+# the pause does too, whole, rather than ending.
+read -r up _ </proc/uptime
+put "$(printf '20 %s some-earlier-boot 240\n' $(( ${up%.*} + 5 )))" "$G"
+expect "after a reboot a pause starts over, whole" "$(run check $'246813\n')" "rc=3 out=240 err="
+expect "and is stamped with this boot" "$(asroot cut -d' ' -f3 "$G")" "$(cat /proc/sys/kernel/random/boot_id)"
+put $'7 0 some-earlier-boot 0\n' "$G"
+expect "a reboot with no pause due changes nothing" "$(run check $'111111\n') $(guard)" "rc=4 out=2 err= 8 0"
+seed 0 0
 
 PY="$WORK/stub/python3-broken"
 expect "a check that cannot be made is not a wrong PIN" "$(run check $'246813\n')" "rc=2 out= err=moarchy-pin: could not check the PIN"
@@ -138,34 +158,41 @@ PY=$PYDEST
 # The attacks: stop the helper between counting and checking, and the guess is
 # still counted. A python that takes two seconds is the window.
 PY="$WORK/stub/python3-slow"
+# `bas[h]` so the pattern cannot match the pkill, or a sudo wrapping it, whose
+# own command lines carry it; unanchored, since under emulation every command
+# line starts with the emulator.
 run check $'111111\n' >"$WORK/bg.out" & bg=$!
 sleep 0.5
-pkill -KILL -f "bash -p $HELPER check"; killed=$?
+asroot pkill -KILL -f "bas[h] -p $HELPER check"; killed=$?
 wait $bg 2>/dev/null
 expect "a helper killed before its verdict has still counted the guess" \
   "$killed $(grep -o '^rc=[0-9]*' "$WORK/bg.out") $(guard)" "0 rc=137 1 0"
 run check $'111111\n' >"$WORK/bg.out" & bg=$!
 sleep 0.5
-pkill -TERM -f "bash -p $HELPER check"; termed=$?
-pkill -HUP -f "bash -p $HELPER check"; hupped=$?
+asroot pkill -TERM -f "bas[h] -p $HELPER check"; termed=$?
+asroot pkill -HUP -f "bas[h] -p $HELPER check"; hupped=$?
 wait $bg
 expect "TERM and HUP are ignored, and the guess is answered" \
   "$termed $hupped $(cat "$WORK/bg.out") $(guard)" "0 0 rc=4 out=8 err= 2 0"
 PY=$PYDEST
-printf '0 0\n' >"$G"
+seed 0 0
 # A file-size limit of zero would make every write of the count fail. Soft
 # only under bwrap, where a user namespace cannot raise a hard limit; the CI
 # runner's sudo backend sets both, as an attacker could.
 if [[ $backend == sudo ]]; then WRAP=(bash -c 'ulimit -f 0; exec "$@"' x); else WRAP=(bash -c 'ulimit -S -f 0; exec "$@"' x); fi
 expect "a zero file-size limit does not stop the count" "$(run check $'111111\n') $(guard)" "rc=4 out=9 err= 1 0"
 WRAP=()
-printf '0 0\n' >"$G"
+seed 0 0
 
 # PAM's door: the PIN with no newline, the user from PAM_USER, and no
 # SUDO_USER at all.
 ENVV=("PAM_TYPE=auth" "PAM_USER=$U")
 expect "pam: the right PIN, as pam_exec sends it" "$(run pam '246813')" "rc=0 out= err="
-expect "pam: a wrong one is counted with the rest" "$(run pam '135799') $(guard)" "rc=4 out=9 err= 1 0"
+expect "pam: a wrong one is counted with the rest, and said in words" "$(run pam '135799') $(guard)" "rc=4 out=Wrong PIN err= 1 0"
+seed 9 0
+expect "pam: a pause is said as one, not as a typo" "$(run pam '135799')" "rc=3 out=Too many wrong PINs. Try again in 2 min. err="
+expect "pam: and while it lasts" "$(run pam '246813')" "rc=3 out=Too many wrong PINs. Try again in 2 min. err="
+seed 0 0
 printf '%s:%s:20000:0:99999:7:::\n' "$U" "$(hash 'older pass phrase')" >"$WORK/shadow"
 expect "pam: a password set before PINs still works for sudo" "$(run pam 'older pass phrase')" "rc=0 out= err="
 printf '%s:%s:20000:0:99999:7:::\n' "$U" "$(hash 246813)" >"$WORK/shadow"
@@ -173,8 +200,28 @@ ENVV=("PAM_TYPE=account" "PAM_USER=$U")
 expect "pam: only from the auth stack" "$(run pam '246813')" "rc=2 out= err=moarchy-pin: pam is for system-auth's auth stack"
 ENVV=("PAM_TYPE=auth")
 expect "pam: not without PAM_USER" "$(run pam '246813')" "rc=2 out= err=moarchy-pin: no user to check a PIN for"
+# Another account's guesses: an account with no password (nobody has a hash
+# in this shadow file) is refused without a count, and the owner's count does
+# not move, so no service account can keep the owner's lock screen paused.
+ENVV=("PAM_TYPE=auth" "PAM_USER=nobody")
+expect "pam: an account with no password is refused uncounted" "$(run pam '111111')" "rc=4 out=Wrong PIN err="
+expect "and the owner's count is untouched" "$(guard)" "0 0"
 ENVV=("SUDO_USER=$U")
-printf '0 0\n' >"$G"
+printf '%s:!:20000:0:99999:7:::\n' "$U" >"$WORK/shadow"
+expect "check: a locked password is refused uncounted" "$(run check $'111111\n') $(guard)" "rc=4 out= err= 0 0"
+printf '%s:%s:20000:0:99999:7:::\n' "$U" "$(hash 246813)" >"$WORK/shadow"
+seed 0 0
+
+# state, which the lock screen asks to tell setup from a keypad from an
+# account it must not lock: passwd -S as root, or `pin` once a PIN is set.
+echo L >"$WORK/stub/pwstate"
+expect "state: a locked password" "$(run state '')" "rc=0 out=L err="
+echo P >"$WORK/stub/pwstate"
+expect "state: a password set some other way" "$(run state '')" "rc=0 out=P err="
+put '' "$WORK/varlib/moarchy/pin-set"
+expect "state: a PIN set through moarchy-pin" "$(run state '')" "rc=0 out=pin err="
+asroot rm -f "$WORK/varlib/moarchy/pin-set"
+echo L >"$WORK/stub/pwstate"
 
 expect "no PIN on stdin" "$(run check '')" "rc=2 out= err=moarchy-pin: no PIN on stdin"
 expect "first: five digits" "$(run first $'12345\n')" "rc=2 out= err=moarchy-pin: a PIN is 6 to 12 digits"
@@ -183,13 +230,13 @@ echo P >"$WORK/stub/pwstate"
 expect "first: refused on an account with a password" "$(run first $'135790\n')" "rc=2 out= err=moarchy-pin: a PIN is already set; change it in Settings"
 echo L >"$WORK/stub/pwstate"
 expect "first: sets the PIN while the password is locked" "$(run first $'135790\n')" "rc=0 out= err="
-expect "first: the PIN reached chpasswd on stdin" "$(cat "$WORK/chpasswd.in")" "$U:135790"
+expect "first: the PIN reached chpasswd on stdin" "$(asroot cat "$WORK/chpasswd.in")" "$U:135790"
 expect "first: the stamp is readable by the lock screen" "$(stat -c %a "$WORK/varlib/moarchy/pin-set")" "644"
 expect "first: refused once stamped, even while L" "$(run first $'135790\n')" "rc=2 out= err=moarchy-pin: a PIN is already set; change it in Settings"
-grep -v '^wheel:' /etc/group >"$WORK/group"; rm -f "$WORK/varlib/moarchy/pin-set"
+grep -v '^wheel:' /etc/group >"$WORK/group"; asroot rm -f "$WORK/varlib/moarchy/pin-set"
 expect "first: refused outside wheel" "$(run first $'135790\n')" "rc=2 out= err=moarchy-pin: $U is not in wheel"
 expect "set: replaces the PIN" "$(run set $'864201\n')" "rc=0 out= err="
-expect "an unknown mode" "$(run bogus $'1\n')" "rc=2 out= err=moarchy-pin: usage: moarchy-pin check|pam|first|set (the PIN on stdin)"
+expect "an unknown mode" "$(run bogus $'1\n')" "rc=2 out= err=moarchy-pin: usage: moarchy-pin check|pam|first|set|state (the PIN on stdin)"
 expect "the count's directory is root's alone" "$(stat -c %a "$WORK/varlib/moarchy/pin")" "700"
 
 if [[ $fail -gt 0 ]]; then

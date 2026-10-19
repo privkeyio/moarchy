@@ -1,1 +1,1 @@
-%wheel ALL=(root) NOPASSWD: /usr/lib/moarchy/bin/moarchy-pin check, /usr/lib/moarchy/bin/moarchy-pin first
+%wheel ALL=(root) NOPASSWD: /usr/lib/moarchy/bin/moarchy-pin check, /usr/lib/moarchy/bin/moarchy-pin first, /usr/lib/moarchy/bin/moarchy-pin state

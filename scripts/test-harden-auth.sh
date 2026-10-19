@@ -11,10 +11,12 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HARDEN="$ROOT/bin/moarchy-harden-auth"
+# Read out of the script, as verify.sh does, so this tests what it says.
+LINE=$(sed -n "s/^LINE='\(.*\)'$/\1/p" "$HARDEN")
 # The six it strips, less any this machine does not have (Ubuntu has no ksu):
 # a stand-in with nothing to bind over would read as a bit left behind.
 BINS=()
-for b in unix_chkpwd su chfn chsh passwd ksu; do [[ -e /usr/bin/$b ]] && BINS+=("$b"); done
+for b in $(sed -n "s/^CHECKERS='\(.*\)'$/\1/p" "$HARDEN"); do [[ -e /usr/bin/$b ]] && BINS+=("$b"); done
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
@@ -52,7 +54,6 @@ session    required                    pam_unix.so
 session    optional                    pam_permit.so
 E
 }
-LINE='auth       [success=1 default=bad]     pam_exec.so          quiet quiet_log expose_authtok seteuid /usr/lib/moarchy/bin/moarchy-pin pam'
 
 setuid_bins() { for b in "${BINS[@]}"; do : >"$WORK/bin/$b"; chmod 4755 "$WORK/bin/$b"; done; }
 
@@ -66,17 +67,17 @@ else
 fi
 
 run() {
-  local out rc args=()
+  local out rc args=() undo=${1:-}
   if [[ $backend == bwrap ]]; then
     for b in "${BINS[@]}"; do args+=(--bind "$WORK/bin/$b" "/usr/bin/$b"); done
     out=$(bwrap --bind / / --dev /dev --bind "$WORK/pam.d" /etc/pam.d "${args[@]}" \
-      --unshare-user --uid 0 --gid 0 "$HARDEN" 2>&1)
+      --unshare-user --uid 0 --gid 0 "$HARDEN" $undo 2>&1)
   else
     out=$(sudo -n unshare -m --propagation private bash -c '
-      w=$1 h=$2; shift 2
+      w=$1 h=$2 u=$3; shift 3
       mount --bind "$w/pam.d" /etc/pam.d || exit 99
       for b; do [[ -e /usr/bin/$b ]] || continue; mount --bind "$w/bin/$b" "/usr/bin/$b" || exit 99; done
-      exec "$h"' bash "$WORK" "$HARDEN" "${BINS[@]}" 2>&1)
+      exec "$h" $u' bash "$WORK" "$HARDEN" "$undo" "${BINS[@]}" 2>&1)
   fi
   rc=$?
   echo "rc=$rc out=$out"
@@ -106,6 +107,14 @@ pambase | sed 's/try_first_pass nullok$/try_first_pass/' >"$WORK/pam.d/system-au
 cp "$WORK/pam.d/system-auth" "$WORK/before"
 expect "an unknown system-auth: refused, loudly" "$(run)" "rc=1 out=moarchy-harden-auth: /etc/pam.d/system-auth has no pam_unix auth line in the shape this replaces; PIN checks through it are NOT counted"
 expect "and left as it was" "$(cmp -s "$WORK/before" "$WORK/pam.d/system-auth" && echo same)" "same"
+
+# Before moarchy is removed: pambase's line back, byte for byte, so system-auth
+# never names a helper that is gone.
+pambase >"$WORK/pam.d/system-auth"; setuid_bins; run >/dev/null
+expect "--undo puts pambase's line back" "$(run --undo) $(diff <(pambase) "$WORK/pam.d/system-auth" >/dev/null && echo pambase)" "rc=0 out= pambase"
+expect "--undo on an untouched system-auth does nothing" "$(run --undo) $(diff <(pambase) "$WORK/pam.d/system-auth" >/dev/null && echo pambase)" "rc=0 out= pambase"
+[[ -n $LINE && ${#BINS[@]} -ge 5 ]] && printf '  PASS  %s\n' "LINE and CHECKERS are read from the script" \
+  || { printf '  FAIL  %s\n' "LINE or CHECKERS could not be read from the script"; fail=$((fail + 1)); }
 
 if [[ $fail -gt 0 ]]; then
   echo "$fail failed"

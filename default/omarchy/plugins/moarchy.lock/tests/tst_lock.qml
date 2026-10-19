@@ -41,6 +41,7 @@ TestCase {
   function test_what_a_shell_start_does() {
     compare(Lock.startupAction("unlocked\n"), "none")
     compare(Lock.startupAction("locked\n"), "relock")
+    compare(Lock.startupAction("locking\n"), "relock")
     compare(Lock.startupAction(""), "boot")
     compare(Lock.startupAction("nonsense"), "boot")
   }

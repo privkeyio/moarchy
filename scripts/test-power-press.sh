@@ -121,15 +121,31 @@ settle
   && ok "a second press just outside the window still leaves the session locked" \
   || no "a second press at 450ms did: $(calls)"
 
-# --- no lock running, or no PIN yet ---------------------------------------
-# No state file at all: the panel only, as on a locked session.
+# --- while the lock is being taken ---------------------------------------
+# No state file (the seconds after boot), or `locking` that never becomes
+# `locked`: after waiting for it, the panel lights and the touchscreen does
+# not, since the session is still reachable under a lock that is not up.
 reset
 rm -f "$LOCK_STATE"
 bash "$PRESS" >/dev/null 2>&1
-settle
+[[ $(calls) == "screen:light " ]] \
+  && ok "before any lock state a press lights the panel and nothing else" \
+  || no "before any lock state a press did: $(calls)"
+reset
+echo locking >"$LOCK_STATE"
+bash "$PRESS" >/dev/null 2>&1
+[[ $(calls) == "screen:light " ]] \
+  && ok "a lock that never becomes secure: the panel only" \
+  || no "under a lock that never became secure a press did: $(calls)"
+# And one that does, while the press waits: a normal press on a locked phone.
+reset
+echo locking >"$LOCK_STATE"
+( sleep 0.5; echo locked >"$LOCK_STATE" ) &
+bash "$PRESS" >/dev/null 2>&1
+wait
 [[ $(calls) == "screen:toggle " ]] \
-  && ok "with no lock state a press only toggles the panel" \
-  || no "with no lock state a press did: $(calls)"
+  && ok "a press during locking waits for the lock and then toggles" \
+  || no "a press during locking did: $(calls)"
 
 # --- three fast presses ---------------------------------------------------
 # Q11b. A double and then a single, not two overlapping doubles. The single

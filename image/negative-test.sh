@@ -136,6 +136,8 @@ chmod 4755 $W/r/usr/bin/su
 printf '#%%PAM-1.0\nauth required pam_unix.so\n' > $W/r/etc/pam.d/omarchy-lock-password
 # 17. system-auth back on pam_unix, so sudo checks the PIN uncounted
 sed -i 's|pam_exec.so .*moarchy-pin pam$|pam_unix.so          try_first_pass nullok|' $W/r/etc/pam.d/system-auth
+# 18. polkit's agent helper back to read-only /var/lib, which fails every prompt
+rm -f "$W/r/usr/lib/systemd/system/polkit-agent-helper@.service.d/50-moarchy-pin.conf"
 # 16. a second sudoers file granting `moarchy-pin set` with no password
 printf '%%wheel ALL=(root) NOPASSWD: /usr/lib/moarchy/bin/moarchy-pin set\n' > $W/r/etc/sudoers.d/99-planted
 umount $W/r
@@ -179,9 +181,10 @@ catches "share one pacman master key"  "a pacman keyring shipped in the image"
 catches "plain-HTTP Server line"       "a plain-HTTP Arch Linux ARM mirror"
 catches "LLMNR or mDNS re-enabled"     "an mDNS responder turned back on"
 catches "USB dev link is in this image" "the USB dev link in a release image"
-catches "not exactly the check and first-PIN rule" "a widened lock-screen sudo rule"
+catches "not exactly the check, first-PIN and state rule" "a widened lock-screen sudo rule"
 catches "su is setuid"                 "su setuid again"
 catches "system-auth checks a password with pam_unix" "system-auth back on pam_unix"
+catches "every polkit prompt fails"     "polkit's agent helper unable to write the count"
 catches "two lockers"                   "upstream's omarchy-lock-password planted"
 catches "other sudoers files name moarchy-pin: /etc/sudoers.d/99-planted" \
                                         "a second sudoers file granting moarchy-pin set"

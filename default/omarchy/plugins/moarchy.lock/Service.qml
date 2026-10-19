@@ -227,7 +227,9 @@ Item {
 
     resetAuthenticationState()
     lockRequested = true
-    writeState("locked")
+    // `locked` only once the compositor says the lock is secure, so the
+    // power button never wakes the touchscreen over a session still reachable.
+    writeState("locking")
     logEvent("lock-requested")
     queueSessionLock()
 
@@ -342,6 +344,7 @@ Item {
         root.pendingSessionLock = false
         sessionLockStabilizeTimer.stop()
         pendingSessionLockTimer.stop()
+        root.writeState("locked")
         if (root.lightWhenSecure) {
           root.lightWhenSecure = false
           root.releaseKeyboard()
@@ -474,17 +477,14 @@ Item {
     // qmllint enable signal-handler-parameters
   }
 
-  // What the account can do, in one line Lock.accountMode reads: `norule` if
-  // sudo will not run the helper, `pin` once moarchy-pin has set a PIN (its
-  // stamp is root's, so nothing the user runs can fake or remove it), and
-  // otherwise passwd's L, NP or P.
+  // What the account can do, in one line Lock.accountMode reads: `pin` once
+  // moarchy-pin has set a PIN (its stamp is root's, so nothing the user runs
+  // can fake or remove it), otherwise passwd's L, NP or P, all from
+  // `moarchy-pin state` as root, since passwd has no setuid bit here and as
+  // the user cannot read /etc/shadow. `norule` if sudo will not run it.
   Process {
     id: accountProc
-    command: ["sh", "-c",
-              "sudo -n -l \"$1\" check >/dev/null 2>&1 || { echo norule; exit 0; }\n" +
-              "[ -e /var/lib/moarchy/pin-set ] && { echo pin; exit 0; }\n" +
-              "passwd -S \"$2\" 2>/dev/null | awk '{print $2}'",
-              "sh", root.pinTool, root.userName]
+    command: ["sh", "-c", "sudo -n \"$1\" state 2>/dev/null || echo norule", "sh", root.pinTool]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {

@@ -7,6 +7,9 @@
 #                       pam_unix, so sudo, polkit and a console login ask too
 #   moarchy-pin first   the very first PIN, from the lock screen's setup mode
 #   moarchy-pin set     a new PIN, from moarchy-pin-change in a terminal
+#   moarchy-pin state   what the account has: `pin`, or passwd's L, NP or P.
+#                       Root's to answer: passwd has no setuid bit here, and
+#                       as the user it cannot read /etc/shadow at all
 #
 # The PIN is on stdin and nowhere else: not argv, which every process can read
 # in /proc, and not the environment. It goes to chpasswd the same way, so the
@@ -16,7 +19,9 @@
 # what sudo asks for. Anything that can test it uncounted is root at the end
 # of about an hour of yescrypt across eight cores. So every check comes here,
 # where a count only root can write pauses entry after every tenth wrong PIN,
-# for two minutes and doubling to an hour, and checks run one at a time:
+# for two minutes and doubling to an hour, and checks run one at a time. The
+# count is the account's own, so no other account can pause it, and an account
+# with no password has nothing to guess and is refused without one:
 #
 #   the lock screen       `moarchy-pin check`, the sudo rule in 20-moarchy-pin
 #   sudo, polkit, login   system-auth, through pam_exec (bin/moarchy-harden-auth)
@@ -37,6 +42,8 @@
 # Exit 0 yes, 4 wrong (stdout: tries left before the next pause), 3 paused
 # (stdout: seconds left), 2 anything else, with one line on stderr. Not 1:
 # sudo exits 1 when it cannot run this at all, and that is not a wrong PIN.
+# `pam` says the same in words, which pam_exec's `stdout` hands to sudo: PAM
+# itself only says the check failed, and a pause would read as a typo.
 set -uo pipefail
 
 trap '' HUP INT QUIT TERM TSTP TTIN TTOU USR1 USR2 PIPE XFSZ
@@ -50,8 +57,10 @@ fi
 
 # Its own directory: /var/lib/moarchy is shared with first boot and pacman
 # init, and must not have its mode changed under them.
+#
+# Also writable by polkit's sandboxed agent helper, and by nothing else there
+# (default/systemd/polkit-agent-helper@.service.d/50-moarchy-pin.conf).
 STATE=/var/lib/moarchy/pin
-GUARD=$STATE/pin-guard
 # Outside $STATE, which is root's alone: the lock screen reads it, as the user,
 # to tell a phone with a PIN from one with some older password. Root-owned in
 # a root-owned directory, so nothing the user runs can fake or remove it.
@@ -60,7 +69,7 @@ STAMP=/var/lib/moarchy/pin-set
 die() { echo "${0##*/}: $*" >&2; exit 2; }
 
 mode=${1:-}
-[[ $mode =~ ^(check|pam|first|set)$ ]] || die "usage: ${0##*/} check|pam|first|set (the PIN on stdin)"
+[[ $mode =~ ^(check|pam|first|set|state)$ ]] || die "usage: ${0##*/} check|pam|first|set|state (the PIN on stdin)"
 (( EUID == 0 )) || die "run it through sudo"
 
 if [[ $mode == pam ]]; then
@@ -70,7 +79,16 @@ else
   user=${SUDO_USER:-}
 fi
 [[ -n $user && $user != root ]] || die "no user to check a PIN for"
-getent passwd "$user" >/dev/null || die "no such user: $user"
+uid=$(id -u -- "$user" 2>/dev/null) || die "no such user: $user"
+GUARD=$STATE/guard-$uid
+
+if [[ $mode == state ]]; then
+  if [[ -e $STAMP ]]; then echo pin; else passwd -S -- "$user" | awk '{print $2}'; fi
+  exit 0
+fi
+
+# What pam mode says to sudo, beside the code.
+say() { [[ $mode == pam ]] && echo "$1"; return 0; }
 
 # Read before taking the lock, and with a deadline, so a caller that never
 # writes cannot hold the lock and keep the lock screen from asking. pam_exec
@@ -81,35 +99,58 @@ install -d -m 700 "$STATE" || die "cannot create $STATE"
 exec 9>"$STATE/pin.lock" || die "cannot open $STATE/pin.lock"
 flock -w 10 9 || die "another PIN check is still running"
 
+# The count is `failures until boot pause`: a pause ends at `until` seconds
+# after this boot, by the clock that counts suspend and that nothing outside
+# the kernel can set. Not the wall clock, which a hostile time server could
+# step forward to end a pause or back to make one last for months. `pause` is
+# how long it was, so a reboot, which restarts that clock, restarts the pause
+# rather than ending it.
+BOOT=$(</proc/sys/kernel/random/boot_id)
+read -r NOW _ </proc/uptime
+NOW=${NOW%.*}
+
 # Whole, synced, then renamed over the old one: a reader never sees half a
 # count, and a power cut cannot roll one back.
 write_guard() {
-  printf '%s %s\n' "$1" "$2" >"$GUARD.tmp" && sync "$GUARD.tmp" &&
+  printf '%s %s %s %s\n' "$1" "$2" "$BOOT" "$3" >"$GUARD.tmp" && sync "$GUARD.tmp" &&
     mv -f "$GUARD.tmp" "$GUARD" && sync "$STATE" || die "cannot record the attempt"
 }
 
 if [[ $mode == check || $mode == pam ]]; then
-  now=$(date +%s)
-  failures=0 until=0
+  # Nothing to guess, so nothing to count: a locked or empty password answers
+  # no without touching any count, the owner's included.
+  hashed=$(getent shadow -- "$user" | cut -d: -f2)
+  if [[ $hashed != \$* ]]; then say "Wrong PIN"; exit 4; fi
+  unset hashed
+  now=$NOW
+  failures=0 until=0 last=0
   if [[ -e $GUARD ]]; then
-    read -r failures until <"$GUARD"
-    # Damaged is not zero: a count that cannot be read pauses, rather than
-    # starting over.
-    if [[ ! ${failures:-} =~ ^[0-9]+$ || ! ${until:-} =~ ^[0-9]+$ ]]; then
-      failures=0 until=$(( now + 120 ))
-      write_guard "$failures" "$until"
+    read -r failures until gboot last <"$GUARD"
+    if [[ ! ${failures:-} =~ ^[0-9]+$ || ! ${until:-} =~ ^[0-9]+$ ||
+          ! ${last:-} =~ ^[0-9]+$ || -z ${gboot:-} ]]; then
+      # Damaged is not zero: a count that cannot be read pauses, rather than
+      # starting over.
+      failures=0 until=$(( now + 120 )) last=120
+      write_guard "$failures" "$until" "$last"
+    elif [[ $gboot != "$BOOT" ]]; then
+      (( until > 0 )) && until=$(( now + last ))
+      write_guard "$failures" "$until" "$last"
     fi
   fi
-  if (( now < until )); then echo $(( until - now )); exit 3; fi
+  if (( now < until )); then
+    say "Too many wrong PINs. Try again in $(( (until - now + 59) / 60 )) min." || true
+    [[ $mode == pam ]] || echo $(( until - now ))
+    exit 3
+  fi
 
   failures=$(( failures + 1 ))
   if (( failures % 10 == 0 )); then
     pause=$(( 120 << (failures / 10 - 1 > 5 ? 5 : failures / 10 - 1) ))
     (( pause > 3600 )) && pause=3600
-    write_guard "$failures" $(( now + pause ))
+    write_guard "$failures" $(( now + pause )) "$pause"
   else
     pause=0
-    write_guard "$failures" 0
+    write_guard "$failures" 0 0
   fi
 
   # Python only for libcrypt's crypt(), which bash cannot reach and which
@@ -136,16 +177,21 @@ sys.exit(0 if match else 1)
 ' "$user"
   verdict=$?
   if (( verdict == 0 )); then
-    write_guard 0 0
+    write_guard 0 0 0
     exit 0
   fi
   if (( verdict != 1 )); then
-    write_guard $(( failures - 1 )) "$until"
+    write_guard $(( failures - 1 )) "$until" "$last"
     die "could not check the PIN"
   fi
   sleep 1
-  if (( pause > 0 )); then echo "$pause"; exit 3; fi
-  echo $(( 10 - failures % 10 ))
+  if (( pause > 0 )); then
+    say "Too many wrong PINs. Try again in $(( pause / 60 )) min."
+    [[ $mode == pam ]] || echo "$pause"
+    exit 3
+  fi
+  say "Wrong PIN"
+  [[ $mode == pam ]] || echo $(( 10 - failures % 10 ))
   exit 4
 fi
 
@@ -160,4 +206,4 @@ fi
 
 printf '%s:%s\n' "$user" "$pin" | chpasswd || die "chpasswd could not set the PIN"
 install -m 644 /dev/null "$STAMP" || die "the PIN is set, but its stamp could not be written"
-write_guard 0 0
+write_guard 0 0 0

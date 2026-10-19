@@ -293,6 +293,7 @@ package() {
          "$pkgdir/usr/share/moarchy/default/pacman-hooks" \
          "$pkgdir/usr/share/moarchy/default/polkit" \
          "$pkgdir/usr/share/moarchy/default/sudoers" \
+         "$pkgdir/usr/share/moarchy/default/tmpfiles" \
          "$pkgdir/usr/share/moarchy/default/udev" \
          "$pkgdir/usr/share/moarchy/default/NetworkManager" \
          "$pkgdir/usr/share/moarchy/default/applications" \
@@ -447,6 +448,8 @@ package() {
   # --- /etc ----------------------------------------------------------------
   install -Dm644 "$_repo/default/etc/profile.d/zz-moarchy.sh" \
     "$pkgdir/etc/profile.d/zz-moarchy.sh"
+  install -Dm644 "$_repo/default/etc/systemd/logind.conf.d/20-no-spare-consoles.conf" \
+    "$pkgdir/etc/systemd/logind.conf.d/20-no-spare-consoles.conf"
   install -Dm644 "$_repo/default/etc/systemd/logind.conf.d/10-power-key.conf" \
     "$pkgdir/etc/systemd/logind.conf.d/10-power-key.conf"
 
@@ -486,10 +489,24 @@ package() {
   install -dm750 "$pkgdir/etc/sudoers.d"
   install -m440 "$_repo/default/sudoers/20-moarchy-pin" "$pkgdir/etc/sudoers.d/20-moarchy-pin"
 
-  # One door to the PIN, put back after any upgrade that would undo it;
-  # bin/moarchy-harden-auth says what that means.
+  # One door to the PIN, put back after any upgrade that would undo it, and
+  # taken out again before this package is, so system-auth never names a
+  # helper that is gone; bin/moarchy-harden-auth says what that means.
   install -Dm644 "$_repo/default/pacman-hooks/20-moarchy-harden-auth.hook" \
     "$pkgdir/usr/share/libalpm/hooks/20-moarchy-harden-auth.hook"
+  install -Dm644 "$_repo/default/pacman-hooks/20-moarchy-harden-auth-remove.hook" \
+    "$pkgdir/usr/share/libalpm/hooks/20-moarchy-harden-auth-remove.hook"
+  # And at every boot, enabled by its package, so no upgrade cut short between
+  # unpacking and the hook leaves a door open until the next one.
+  install -Dm644 "$_repo/default/systemd/system/moarchy-harden-auth.service" \
+    "$pkgdir/usr/lib/systemd/system/moarchy-harden-auth.service"
+  install -d "$pkgdir/usr/lib/systemd/system/sysinit.target.wants"
+  ln -s ../moarchy-harden-auth.service \
+    "$pkgdir/usr/lib/systemd/system/sysinit.target.wants/moarchy-harden-auth.service"
+  # The PIN's count, and polkit's sandboxed agent helper allowed to write it.
+  install -Dm644 "$_repo/default/tmpfiles/moarchy-pin.conf" "$pkgdir/usr/lib/tmpfiles.d/moarchy-pin.conf"
+  install -Dm644 "$_repo/default/systemd/polkit-agent-helper@.service.d/50-moarchy-pin.conf" \
+    "$pkgdir/usr/lib/systemd/system/polkit-agent-helper@.service.d/50-moarchy-pin.conf"
 
   # The torch tile's permission. 73 so it runs after feedbackd's 72, which
   # tries to do this and cannot on Arch -- the rule's own header has the whole
