@@ -190,7 +190,10 @@ pkgver=$_ver
 # 8: the plugins say `Commons.Color`, not `Color`. QtQuick 6.12 brings its own
 #    `Color`, which shadows the qs.Commons singleton, and every moarchy surface
 #    rendered black (omarchy-config 7 carries the same rewrite for the shell).
-pkgrel=8
+# 9: ships resolved.conf.d/50-moarchy.conf, which turns off systemd-resolved's
+#    LLMNR and mDNS responders, so the phone stops announcing its hostname to
+#    every network it joins (from the next boot; debug images keep mDNS).
+pkgrel=9
 pkgdesc="Omarchy's look, keybindings and theming on a phone, under Hyprland"
 arch=('any')
 url='https://github.com/SimonSchubert/moarchy'
@@ -482,6 +485,9 @@ package() {
     "$pkgdir/usr/lib/NetworkManager/system-connections/moarchy-mobile-data.nmconnection"
 
   # --- systemd -------------------------------------------------------------
+  # /usr/lib, so /etc/systemd/resolved.conf.d stays free to override it.
+  install -Dm644 "$_repo/default/systemd/resolved.conf.d/50-moarchy.conf" \
+    "$pkgdir/usr/lib/systemd/resolved.conf.d/50-moarchy.conf"
   install -Dm644 "$_repo/default/systemd/system/moarchy-firstboot.service" \
     "$pkgdir/usr/lib/systemd/system/moarchy-firstboot.service"
   install -Dm644 "$_repo/default/systemd/system/moarchy-led-perms.service" \
