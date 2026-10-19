@@ -354,10 +354,13 @@ if [ -z "$(cat "$G/UDC" 2>/dev/null)" ]; then
   echo moarchy > "$G/strings/0x409/manufacturer"
   echo "moarchy dev link" > "$G/strings/0x409/product"
   echo moarchydev > "$G/strings/0x409/serialnumber"
-  echo 02:00:00:6d:6f:01 > "$G/functions/ncm.usb0/host_addr"
-  echo 02:00:00:6d:6f:02 > "$G/functions/ncm.usb0/dev_addr"
   echo ncm > "$G/configs/c.1/strings/0x409/configuration"
-  [ -L "$G/configs/c.1/ncm.usb0" ] || ln -s "$G/functions/ncm.usb0" "$G/configs/c.1/"
+  # The addresses are read-only (EBUSY) once the function is linked.
+  if [ ! -L "$G/configs/c.1/ncm.usb0" ]; then
+    echo 02:00:00:6d:6f:01 > "$G/functions/ncm.usb0/host_addr"
+    echo 02:00:00:6d:6f:02 > "$G/functions/ncm.usb0/dev_addr"
+    ln -s "$G/functions/ncm.usb0" "$G/configs/c.1/"
+  fi
   echo "$udc" > "$G/UDC"
 fi
 IF=$(cat "$G/functions/ncm.usb0/ifname")
@@ -385,8 +388,21 @@ EOF
       >"$ROOTDIR/etc/NetworkManager/conf.d/90-moarchy-usbnet.conf"
     # Bound to the link: no address, no sshd, rather than one on every network.
     install -d "$ROOTDIR/etc/systemd/system/sshd.service.d"
-    printf '[Unit]\nRequires=moarchy-usbnet.service\nAfter=moarchy-usbnet.service\n\n[Service]\nRestrictNetworkInterfaces=usb0\nIPAddressDeny=any\nIPAddressAllow=10.66.0.1\n' \
-      >"$ROOTDIR/etc/systemd/system/sshd.service.d/20-moarchy-usbnet.conf"
+    # systemd starts a unit unfiltered when it cannot load the BPF programs,
+    # so sshd proves the filter holds: from inside its own cgroup, its own
+    # port must be unreachable (the filter drops the SYN, hence the timeout).
+    # If it is reachable, sshd is stopped.
+    cat >"$ROOTDIR/etc/systemd/system/sshd.service.d/20-moarchy-usbnet.conf" <<'EOF'
+[Unit]
+Requires=moarchy-usbnet.service
+After=moarchy-usbnet.service
+
+[Service]
+RestrictNetworkInterfaces=usb0
+IPAddressDeny=any
+IPAddressAllow=10.66.0.1
+ExecStartPost=/usr/bin/bash -c '! timeout 3 bash -c "exec 3<>/dev/tcp/10.66.0.2/22" 2>/dev/null'
+EOF
     printf 'ListenAddress 10.66.0.2\nAllowUsers %s@10.66.0.1\n' "$USER_NAME" \
       >"$ROOTDIR/etc/ssh/sshd_config.d/20-moarchy-usbnet.conf"
     arch-chroot "$ROOTDIR" systemctl enable moarchy-usbnet.service sshd.service >/dev/null 2>&1 || true

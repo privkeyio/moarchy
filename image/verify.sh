@@ -503,15 +503,24 @@ else
   else
     no "sshd's traffic is not confined to usb0 and 10.66.0.1 -- Wi-Fi peers can reach it"
   fi
-  # A second drop-in could reset those settings with an empty assignment.
-  _od=$(find "$R"/etc/systemd/system/sshd.service.d "$R"/usr/lib/systemd/system/sshd.service.d -mindepth 1 \
-    ! -path "$_sd" 2>/dev/null | sed "s|^$R||" | tr '\n' ' ')
-  [ -z "$_od" ] && ok "no other sshd.service drop-ins" || no "other sshd.service drop-ins could undo the link's: $_od"
+  grep -qF "ExecStartPost=/usr/bin/bash -c '! timeout 3 bash -c \"exec 3<>/dev/tcp/10.66.0.2/22\"" "$_sd" 2>/dev/null \
+    && ok "sshd stops if the filter is not enforced" || no "sshd does not test its filter -- without BPF it would start unfiltered"
+  # Another drop-in could reset those settings with an empty assignment:
+  # any for sshd.service, or a type-wide service.d one that names them.
+  _od=$(find "$R"/etc/systemd/system/sshd.service.d "$R"/usr/lib/systemd/system/sshd.service.d \
+    "$R"/usr/local/lib/systemd/system/sshd.service.d -mindepth 1 ! -path "$_sd" 2>/dev/null | sed "s|^$R||")
+  _od="$_od $(grep -lsE '^\s*(RestrictNetworkInterfaces|IPAddress(Allow|Deny)|ExecStartPost)\s*=' \
+    "$R"/etc/systemd/system/service.d/* "$R"/usr/lib/systemd/system/service.d/* \
+    "$R"/usr/local/lib/systemd/system/service.d/* | sed "s|^$R||")"
+  _od=$(echo $_od)
+  [ -z "$_od" ] && ok "no other drop-in can reset sshd's filter" || no "other drop-ins could undo the link's sshd filter: $_od"
   grep -q 'disable_ipv6' "$R/usr/local/sbin/moarchy-usbnet" 2>/dev/null \
     && ok "usb0 takes no IPv6" || no "usb0 accepts IPv6 router advertisements from the USB host"
   # sshd's own parser, not a grep: it follows Include, accepts keyword=value
   # and quotes, and applies Match. Probed as the PC and as a LAN host, so a
   # Match that opens sshd to some other address shows up too.
+  # sshd opens /dev/null, and nothing mounts /dev in this chroot.
+  _dn=0; [ -e "$R/dev/null" ] || { mknod -m 666 "$R/dev/null" c 1 3 && _dn=1; }
   chroot "$R" ssh-keygen -q -t ed25519 -N '' -f /tmp/verify-hostkey </dev/null >/dev/null 2>&1
   for _a in 10.66.0.1 192.168.1.5; do
     _t=$(chroot "$R" /usr/bin/sshd -T -h /tmp/verify-hostkey \
@@ -526,6 +535,7 @@ else
     [ "$_pa" = no ] || no "sshd allows password auth (as seen from $_a)"
   done
   rm -f "$R/tmp/verify-hostkey" "$R/tmp/verify-hostkey.pub"
+  [ "$_dn" = 0 ] || rm -f "$R/dev/null"
 fi
 grep -qi '^PasswordAuthentication no' "$R/etc/ssh/sshd_config.d/10-moarchy.conf" 2>/dev/null \
   && ok "sshd password auth disabled" || no "sshd password auth not disabled"

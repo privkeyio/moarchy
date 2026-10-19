@@ -63,6 +63,11 @@ if [ "${DEV_IMAGE:-0}" = 1 ]; then
   printf '[Service]\nIPAddressDeny=\n' > $W/r/etc/systemd/system/sshd.service.d/99-planted.conf
   # d5. IPv6 left on for the USB host to configure
   sed -i '/disable_ipv6/d' $W/r/usr/local/sbin/moarchy-usbnet
+  # d6. a type-wide drop-in that resets the filter for every service
+  mkdir -p $W/r/etc/systemd/system/service.d
+  printf '[Service]\nRestrictNetworkInterfaces=\n' > $W/r/etc/systemd/system/service.d/99-planted.conf
+  # d7. the self-test that stops an unfiltered sshd, removed
+  sed -i '/^ExecStartPost=/d' $W/r/etc/systemd/system/sshd.service.d/20-moarchy-usbnet.conf
   umount $W/r
   img2simg $W/root.raw $W/bad/rootfs.simg || { echo "img2simg failed"; exit 1; }
   rm -f $W/root.raw
@@ -79,7 +84,9 @@ if [ "${DEV_IMAGE:-0}" = 1 ]; then
   catches "AllowUsers is '\* ', not moarchy@10.66.0.1 alone (as seen from 192.168.1.5)" \
                                           "a Match block opening sshd to the LAN"
   catches "not confined to usb0"          "sshd's packet filter removed"
-  catches "drop-ins could undo"           "a drop-in that could reset the filter"
+  catches "could undo.*sshd.service.d/99-planted.conf" "a drop-in that could reset the filter"
+  catches "could undo.*/etc/systemd/system/service.d/99-planted.conf" "a type-wide drop-in resetting the filter"
+  catches "does not test its filter"      "the filter self-test removed"
   catches "accepts IPv6 router"           "IPv6 left on usb0"
   echo
   if [ $rc -ne 0 ]; then ok "verify.sh exited non-zero ($rc)"; else no "verify.sh exited 0 on a broken dev image"; fi
