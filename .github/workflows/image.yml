@@ -1,0 +1,110 @@
+name: image
+
+# Builds the sargo image from this tree and runs verify.sh and the negative test
+# on it, on a native arm64 runner (no QEMU). The in-repo packages are built
+# here; the manifest components and AUR rebuilds come from the published signed
+# [moarchy] repo (scripts/fetch-published.sh), so this tests the tree, not a
+# release. The image is not a debug image: no SSH key, no Wi-Fi credentials.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  LOG: ${{ github.workspace }}/.cache/build.log
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04-arm
+    # The kernel, when its cache misses, is most of this.
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Unit tests
+        run: |
+          set -o pipefail
+          mkdir -p .cache
+          ./scripts/style-check.sh 2>&1 | tee -a "$LOG"
+          python3 -I image/boot/test-android-image.py 2>&1 | tee -a "$LOG"
+          bash image/boot/test-backends.sh 2>&1 | tee -a "$LOG"
+
+      # Only the kernel is cached: its version moves with pkgrel and its inputs
+      # are all in its directory. Every other in-repo package is rebuilt, since
+      # moarchy's payload is bin/, default/ and config/, not its PKGBUILD.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/kernel
+          key: kernel-${{ hashFiles('pkgbuilds/linux-moarchy-sdm670/**') }}
+
+      - name: Build the in-repo packages
+        run: |
+          set -o pipefail
+          mkdir -p packages .cache/kernel
+          cp .cache/kernel/*.pkg.tar.* packages/ 2>/dev/null || true
+          # The container builds as its own builder user.
+          chmod -R a+rwX packages
+          PKGBUILD_ONLY="$(ls pkgbuilds)" ./scripts/provision.sh build 2>&1 | tee -a "$LOG"
+          sudo chown -R "$(id -u):$(id -g)" packages
+          rm -f .cache/kernel/*
+          awk '$2 ~ /^linux-moarchy-sdm670-/ { print "packages/" $2 }' packages/.build-manifest |
+            xargs -r cp -t .cache/kernel/
+
+      - name: Packages from the published repo
+        run: |
+          set -o pipefail
+          ./scripts/fetch-published.sh 2>&1 | tee -a "$LOG"
+
+      - name: Build the image
+        run: |
+          set -o pipefail
+          ./scripts/build-image.sh 2>&1 | tee -a "$LOG"
+          sudo chown -R "$(id -u):$(id -g)" images
+          art=$(ls -td images/moarchy-sargo-*/ | head -1)
+          echo "ART=${art%/}" >> "$GITHUB_ENV"
+          df -h /
+
+      - name: Verify the image
+        run: |
+          set -o pipefail
+          ./scripts/verify-image.sh "$ART" 2>&1 | tee -a "$LOG"
+
+      - name: Negative test
+        run: |
+          set -o pipefail
+          docker run --rm --privileged --platform linux/arm64 -v "$PWD/images:/img:ro" \
+            --entrypoint bash moarchy-image /repo/image/negative-test.sh "/img/$(basename "$ART")" 2>&1 | tee -a "$LOG"
+
+      - name: Checksums
+        run: |
+          ( cd "$ART" && sha256sum ./* > SHA256SUMS && cat SHA256SUMS )
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sargo-image
+          path: ${{ env.ART }}
+          retention-days: 7
+          compression-level: 0
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: build-log
+          path: .cache/build.log
+          retention-days: 7
