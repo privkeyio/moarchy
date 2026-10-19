@@ -22,9 +22,9 @@
 hl.unbind("XF86AudioRaiseVolume")
 hl.unbind("XF86AudioLowerVolume")
 hl.unbind("XF86AudioMute")
-o.bind("XF86AudioRaiseVolume", "Volume up",   "moarchy-volume up",   { locked = true, repeating = true })
-o.bind("XF86AudioLowerVolume", "Volume down", "moarchy-volume down", { locked = true, repeating = true })
-o.bind("XF86AudioMute",        "Mute",        "moarchy-volume mute", { locked = true })
+o.bind("XF86AudioRaiseVolume", "Volume up",   "moarchy-volume up",   { locked = true, repeating = true, submap_universal = true })
+o.bind("XF86AudioLowerVolume", "Volume down", "moarchy-volume down", { locked = true, repeating = true, submap_universal = true })
+o.bind("XF86AudioMute",        "Mute",        "moarchy-volume mute", { locked = true, submap_universal = true })
 
 -- --- The power button -------------------------------------------------------
 -- The other button. logind's HandlePowerKey is already set to ignore the short
@@ -35,10 +35,23 @@ o.bind("XF86AudioMute",        "Mute",        "moarchy-volume mute", { locked = 
 -- else entirely (docs/gestures.md Q11) -- which is why it goes through
 -- moarchy-power-press rather than straight to moarchy-screen.
 --
--- locked so it still works with a session lock up; repeating = false so
--- holding it does not toggle over and over on the way to the long press.
+-- locked so it still works with a session lock up, submap_universal so it
+-- works in the boot submap below; repeating = false so holding it does not
+-- toggle over and over on the way to the long press.
 hl.unbind("XF86PowerOff")
-o.bind("XF86PowerOff", "Screen on/off", "moarchy-power-press", { locked = true, repeating = false })
+o.bind("XF86PowerOff", "Screen on/off", "moarchy-power-press", { locked = true, repeating = false, submap_universal = true })
+
+-- --- The seconds before the lock --------------------------------------------
+-- From Hyprland's start until moarchy.lock is up, the session is live under a
+-- dark, deaf panel (autostart.lua), and a USB keyboard would still reach every
+-- binding: a terminal, typed blind, before anyone has given a PIN. This submap
+-- has one binding, a catchall that swallows every key, modifiers and all; the
+-- hardware buttons above are universal and still work. autostart.lua enters
+-- it, and moarchy.lock leaves it once its lock is secure, or at once on a
+-- phone it cannot lock.
+hl.define_submap("moarchy-boot", function()
+  hl.bind("catchall", function() end, { ignore_mods = true })
+end)
 
 -- --- Our panels, not upstream's --------------------------------------------
 -- The bar is moarchy.bar, so upstream's bar-widget panels do not exist here.

@@ -167,6 +167,7 @@ Item {
     if (!lockable) {
       logEvent("lock-at-start: not possible (" + accountMode + ")")
       writeState("unlocked")
+      releaseKeyboard()
       if (action === "boot") Quickshell.execDetached([root.screenTool, "unlock"])
       return
     }
@@ -200,6 +201,12 @@ Item {
   // never leave the file saying unlocked.
   function writeState(state) {
     stateFile.setText(state + "\n")
+  }
+
+  // Out of the boot submap autostart.lua put the keyboard in (bindings.lua).
+  // Harmless when it is not in it.
+  function releaseKeyboard() {
+    Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.submap(\"reset\")"])
   }
 
   function beginLock() {
@@ -242,6 +249,7 @@ Item {
     resetAuthenticationState()
     sessionLock.locked = false
     writeState("unlocked")
+    releaseKeyboard()
     logEvent("unlocked")
   }
 
@@ -336,6 +344,7 @@ Item {
         pendingSessionLockTimer.stop()
         if (root.lightWhenSecure) {
           root.lightWhenSecure = false
+          root.releaseKeyboard()
           Quickshell.execDetached([root.screenTool, "unlock"])
         }
       }
