@@ -505,6 +505,15 @@ else
   no "the power button's double press is broken (Q11)" "$pp_out"
 fi
 
+# structure.md I8. The PIN's one door: the count, the doubling pause, and the
+# first-PIN gate, run as root in a namespace over a scratch shadow file.
+printf '\nthe PIN helper (structure.md I8, not a style.md section)\n'
+if pin_out=$(bash scripts/test-moarchy-pin.sh 2>&1); then
+  ok "moarchy-pin counts, pauses and refuses as it says ($(grep -c PASS <<<"$pin_out") cases, I8)"
+else
+  no "moarchy-pin does not do what the lock screen relies on (I8)" "$pin_out"
+fi
+
 # gestures.md Q2, Q2a. The edge table: which axis a sheet arrives on, which way
 # it opens, and where it sits part-way in. Pure arithmetic with no Qt in it, and
 # the first group of cases is each sheet's own pre-Q formula -- so a wrong row

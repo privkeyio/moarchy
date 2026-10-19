@@ -11,6 +11,12 @@
 -- on every theme change.
 
 hl.on("hyprland.start", function()
+  -- A dark, deaf panel until the lock is up. The shell takes seconds to start
+  -- and lock, and the session is live under it until then; moarchy.lock
+  -- lights the panel once its lock is secure, or at once on a phone it cannot
+  -- lock. If the shell never comes, the power button lights it as always.
+  hl.exec_cmd("moarchy-screen lock")
+
   -- Nothing else pulls graphical-session.target up. Hyprland is started from
   -- a login shell rather than uwsm or a display manager (uwsm is not in Arch
   -- Linux ARM), so every user unit hanging off that target would otherwise be

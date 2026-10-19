@@ -1,6 +1,7 @@
 #!/bin/bash
-# The PIN, set as the account's password. Root only, reached through sudo.
+# The PIN, which is the account's password. Root only, reached through sudo.
 #
+#   moarchy-pin check   is this the PIN? The lock screen's only way to ask
 #   moarchy-pin first   the very first PIN, from the lock screen's setup mode
 #   moarchy-pin set     a new PIN, from moarchy-pin-change in a terminal
 #
@@ -8,15 +9,25 @@
 # can read in /proc, and not the environment. It goes to chpasswd the same way,
 # so the hash is whatever the system hashes passwords with.
 #
-# `first` is what /etc/sudoers.d/20-moarchy-pin lets the wheel group run with
-# no password, because the lock screen has no PIN to give sudo yet. So it has
-# to be useless once a PIN exists: it refuses unless the account's password is
-# still locked (L) or empty (NP), checked under a lock so two callers cannot
-# both see L. A stranger holding a phone that already has a PIN gets nothing
-# from it. `set` has no rule of its own and is reached through ordinary sudo,
-# which asks for the current PIN once passwordless sudo is gone.
+# `check` and `first` are what /etc/sudoers.d/20-moarchy-pin lets the wheel
+# group run with no password, because the lock screen has no PIN to give sudo.
 #
-# Prints nothing on success; one line and a non-zero exit otherwise.
+# **Why the lock screen asks this and not PAM.** A six-digit PIN is a million
+# guesses, and the PIN is also what sudo asks for. An unprivileged locker checks
+# a password through setuid unix_chkpwd, which any process can call as often as
+# it likes, uncounted: about 40ms a guess, so the whole space in an hour across
+# eight cores, and root at the end of it. So unix_chkpwd loses its setuid bit
+# (default/pacman-hooks/20-moarchy-unix-chkpwd.hook) and this is the one door,
+# with a count only root can write: every tenth wrong PIN pauses entry for two
+# minutes, doubling each time up to a day.
+#
+# `first` has to be useless once a PIN exists. It refuses once one has been set
+# (the stamp below), and while the account's password is anything but locked
+# (L) or empty (NP). `set` has no rule of its own and is reached through
+# ordinary sudo, which asks for the current PIN.
+#
+# Exit 0 yes, 1 wrong (stdout: tries left before the next pause), 3 paused
+# (stdout: seconds left), 2 anything else, with one line on stderr.
 set -uo pipefail
 
 # Run as root with the caller's environment otherwise intact, so a PATH the
@@ -25,28 +36,95 @@ if (( EUID == 0 )); then
   export PATH=/usr/bin
 fi
 
-die() { echo "${0##*/}: $*" >&2; exit 1; }
+# Its own directory: /var/lib/moarchy is shared with first boot and pacman
+# init, and must not have its mode changed under them.
+STATE=/var/lib/moarchy/pin
+GUARD=$STATE/pin-guard
+# Outside $STATE, which is root's alone: the lock screen reads it, as the user,
+# to tell a phone with a PIN from one with some older password. Root-owned in
+# a root-owned directory, so nothing the user runs can fake or remove it.
+STAMP=/var/lib/moarchy/pin-set
+
+die() { echo "${0##*/}: $*" >&2; exit 2; }
 
 mode=${1:-}
-[[ $mode == first || $mode == set ]] || die "usage: ${0##*/} first|set (the PIN on stdin)"
+[[ $mode == check || $mode == first || $mode == set ]] || die "usage: ${0##*/} check|first|set (the PIN on stdin)"
 (( EUID == 0 )) || die "run it through sudo"
 
 user=${SUDO_USER:-}
 [[ -n $user && $user != root ]] || die "no SUDO_USER to set a PIN for"
 getent passwd "$user" >/dev/null || die "no such user: $user"
 
-exec 9>/run/lock/moarchy-pin.lock || die "cannot open /run/lock/moarchy-pin.lock"
-flock -w 10 9 || die "another PIN change is still running"
+# Read before taking the lock, and with a deadline, so a caller that never
+# writes cannot hold the lock and keep the lock screen from asking.
+IFS= read -r -t 10 pin || [[ -n ${pin:-} ]] || die "no PIN on stdin"
+
+install -d -m 700 "$STATE" || die "cannot create $STATE"
+exec 9>"$STATE/pin.lock" || die "cannot open $STATE/pin.lock"
+flock -w 10 9 || die "another PIN check is still running"
+
+if [[ $mode == check ]]; then
+  now=$(date +%s)
+  read -r failures until 2>/dev/null <"$GUARD" || true
+  [[ ${failures:-} =~ ^[0-9]+$ ]] || failures=0
+  [[ ${until:-} =~ ^[0-9]+$ ]] || until=0
+  if (( now < until )); then echo $(( until - now )); exit 3; fi
+
+  # Python only for libcrypt's crypt(), which bash cannot reach and which
+  # takes whatever scheme the hash names. It reads the hash itself, so the
+  # hash, like the PIN, is never in argv. 0 is a match and 1 is not; anything
+  # else is a check that could not be made, which must not count as a wrong
+  # PIN, or a broken libcrypt would turn every right PIN into a pause.
+  verdict=1
+  if [[ $pin =~ ^[0-9]{6,12}$ ]]; then
+    printf '%s\n' "$pin" | python3 -I -c '
+import ctypes, ctypes.util, sys
+try:
+    user, pin = sys.argv[1], sys.stdin.buffer.readline().rstrip(b"\n")
+    with open("/etc/shadow", "rb") as f:
+        hashed = next((l.split(b":")[1] for l in f if l.split(b":")[0] == user.encode()), b"")
+    lib = ctypes.util.find_library("crypt")
+    if not lib:
+        raise OSError("no libcrypt")
+    lc = ctypes.CDLL(lib)
+    lc.crypt.restype = ctypes.c_char_p
+    lc.crypt.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+    match = hashed[:1] == b"$" and lc.crypt(pin, hashed) == hashed
+except Exception:
+    sys.exit(2)
+sys.exit(0 if match else 1)
+' "$user"
+    verdict=$?
+  fi
+  (( verdict <= 1 )) || die "could not check the PIN"
+  if (( verdict == 0 )); then
+    printf '0 0\n' >"$GUARD"
+    exit 0
+  fi
+
+  sleep 1
+  failures=$(( failures + 1 ))
+  if (( failures % 10 == 0 )); then
+    pause=$(( 120 << (failures / 10 - 1 > 10 ? 10 : failures / 10 - 1) ))
+    (( pause > 86400 )) && pause=86400
+    printf '%s %s\n' "$failures" $(( now + pause )) >"$GUARD"
+    echo "$pause"
+    exit 3
+  fi
+  printf '%s 0\n' "$failures" >"$GUARD"
+  echo $(( 10 - failures % 10 ))
+  exit 1
+fi
+
+[[ $pin =~ ^[0-9]{6,12}$ ]] || die "a PIN is 6 to 12 digits"
 
 if [[ $mode == first ]]; then
+  [[ ! -e $STAMP ]] || die "a PIN is already set; change it in Settings"
   [[ " $(id -nG "$user") " == *" wheel "* ]] || die "$user is not in wheel"
   state=$(passwd -S "$user" 2>/dev/null | awk '{print $2}')
   [[ $state == L || $state == NP ]] || die "a PIN is already set; change it in Settings"
 fi
 
-# One line. A last line with no newline still counts, which is what `read`
-# returning non-zero with a value means.
-IFS= read -r pin || [[ -n ${pin:-} ]] || die "no PIN on stdin"
-[[ $pin =~ ^[0-9]{6,12}$ ]] || die "a PIN is 6 to 12 digits"
-
 printf '%s:%s\n' "$user" "$pin" | chpasswd || die "chpasswd could not set the PIN"
+install -m 644 /dev/null "$STAMP" || die "the PIN is set, but its stamp could not be written"
+printf '0 0\n' >"$GUARD"

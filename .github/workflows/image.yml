@@ -103,6 +103,14 @@ jobs:
           set -o pipefail
           ./scripts/verify-image.sh "$ART" 2>&1 | tee -a "$LOG"
 
+      # The plugins' QML unit tests, on the phone's own Qt: Arch Linux ARM's, in
+      # the image container. Ubuntu's Qt 6.4 is too old for one of them.
+      - name: QML tests
+        run: |
+          set -o pipefail
+          docker run --rm --platform linux/arm64 -v "$PWD:/repo:ro" --entrypoint bash moarchy-image \
+            -c 'pacman -Sy --noconfirm --needed qt6-declarative >/dev/null && bash /repo/scripts/test-qml.sh' 2>&1 | tee -a "$LOG"
+
       - name: Negative test
         run: |
           set -o pipefail

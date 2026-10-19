@@ -10,8 +10,9 @@
 # and is noticed by hand, once, months later.
 #
 # The screen stub keeps the real flag file, because whether a single press
-# locks depends on whether it blanked (Q11d). The lock stub removes the unlocked
-# marker the way moarchy.lock does, so a press after it reads as locked (Q11e).
+# locks depends on whether it blanked (Q11d). The lock stub writes `locked` to
+# the state file the way moarchy.lock does, so a press after it reads as locked
+# (Q11e).
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,7 +22,7 @@ trap 'rm -rf "$WORK"' EXIT
 export HOME="$WORK/home"
 export XDG_STATE_HOME="$HOME/.local/state"
 export XDG_RUNTIME_DIR="$WORK/run"
-mkdir -p "$XDG_STATE_HOME/moarchy" "$XDG_RUNTIME_DIR/moarchy" "$WORK/bin"
+mkdir -p "$XDG_STATE_HOME/moarchy" "$XDG_RUNTIME_DIR" "$WORK/bin"
 
 # Stubs that record rather than act.
 cat > "$WORK/bin/moarchy-screen" <<'E'
@@ -41,7 +42,7 @@ E
 cat > "$WORK/bin/omarchy-shell" <<'E'
 #!/bin/bash
 printf 'shell:%s:%s\n' "$1" "$2" >>"$XDG_STATE_HOME/moarchy/calls"
-[[ $1 == moarchy-lock && $2 == lock ]] && rm -f "$XDG_RUNTIME_DIR/moarchy/unlocked"
+[[ $1 == moarchy-lock && $2 == lock ]] && echo locked >"$XDG_RUNTIME_DIR/moarchy-lock-state"
 echo ok
 E
 chmod +x "$WORK/bin"/*
@@ -49,7 +50,7 @@ export PATH="$WORK/bin:$PATH"
 
 PRESS="$ROOT/bin/moarchy-power-press"
 CALLS="$XDG_STATE_HOME/moarchy/calls"
-MARKER="$XDG_RUNTIME_DIR/moarchy/unlocked"
+LOCK_STATE="$XDG_RUNTIME_DIR/moarchy-lock-state"
 
 fail=0
 ok() { printf '  PASS  %s\n' "$1"; }
@@ -57,8 +58,9 @@ no() { printf '  FAIL  %s\n' "$1"; fail=$((fail + 1)); }
 # An unlocked session with the panel lit, which is where a press starts.
 reset() {
   : >"$CALLS"
-  rm -f "$XDG_STATE_HOME/moarchy/power-press" "$XDG_STATE_HOME/moarchy/screen-locked"
-  : >"$MARKER"
+  rm -f "$XDG_STATE_HOME/moarchy/power-press" "$XDG_STATE_HOME/moarchy/power-double" \
+        "$XDG_STATE_HOME/moarchy/screen-locked"
+  echo unlocked >"$LOCK_STATE"
 }
 calls() { tr '\n' ' ' <"$CALLS"; }
 # Past the delayed lock's sleep, so whatever it was going to do is done.
@@ -106,6 +108,28 @@ settle
   && ok "two slow presses are a lock and then a wake" \
   || no "two slow presses did: $(calls)"
 
+# --- a second press just outside the window ------------------------------
+# Not a double, so it lights the panel -- and must not cancel the first
+# press's lock, or a press at 450ms leaves the phone lit and unlocked.
+reset
+bash "$PRESS" >/dev/null 2>&1
+sleep 0.45
+bash "$PRESS" >/dev/null 2>&1
+settle
+[[ $(calls) == "screen:toggle screen:toggle shell:moarchy-lock:lock " ]] \
+  && ok "a second press just outside the window still leaves the session locked" \
+  || no "a second press at 450ms did: $(calls)"
+
+# --- no lock running, or no PIN yet ---------------------------------------
+# No state file at all: the panel only, as on a locked session.
+reset
+rm -f "$LOCK_STATE"
+bash "$PRESS" >/dev/null 2>&1
+settle
+[[ $(calls) == "screen:toggle " ]] \
+  && ok "with no lock state a press only toggles the panel" \
+  || no "with no lock state a press did: $(calls)"
+
 # --- three fast presses ---------------------------------------------------
 # Q11b. A double and then a single, not two overlapping doubles. The single
 # blanks, so it is the one press of the three that locks.
@@ -124,7 +148,7 @@ settle
 # --- presses on a locked session ------------------------------------------
 # Q11e. The panel only: no stamp read, no trigger, nothing locked again.
 reset
-rm -f "$MARKER"
+echo locked >"$LOCK_STATE"
 bash "$PRESS" >/dev/null 2>&1
 bash "$PRESS" >/dev/null 2>&1
 settle

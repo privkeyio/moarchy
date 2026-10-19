@@ -11,15 +11,20 @@
 //
 // Upstream's own lock plugin still loads, and stays inert: it refuses to lock
 // without /etc/pam.d/omarchy-lock-password, which this phone does not ship.
-// This one reads /etc/pam.d/moarchy-lock and answers on its own IPC target,
-// `moarchy-lock`, so the two never contend for one lock.
+// This one answers on its own IPC target, `moarchy-lock`, so the two never
+// contend for one lock.
+//
+// A PIN is checked by `moarchy-pin check` through sudo, never through PAM: the
+// helper keeps a count only root can write and pauses entry after every tenth
+// wrong PIN, and the uncounted way an unprivileged locker would check
+// (unix_chkpwd) is gone. bin/moarchy-pin says why that matters here.
 //
 // When it locks: at session start, and whenever moarchy-system-lock asks (the
 // power button, the idle timeout, Settings > Power > Lock). A shell restart
-// must not lock an unlocked user, so unlocking leaves a marker in
-// $XDG_RUNTIME_DIR, which is tmpfs and empty again after a reboot. Taking a
-// lock removes it. moarchy-power-press reads the same marker to know a press
-// on a locked phone only toggles the panel.
+// must not lock an unlocked user, so the session's state is written to
+// $XDG_RUNTIME_DIR/moarchy-lock-state, which is tmpfs and gone after a reboot.
+// moarchy-power-press reads the same file to know a press on a locked phone
+// only toggles the panel. The decisions themselves are in Lock.js.
 //
 // Setup mode is the first boot. The image ships the account with a locked
 // password (`passwd -S` says L), so there is no PIN to check; the lock surface
@@ -30,10 +35,10 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
 import Quickshell.Io
-import Quickshell.Services.Pam
 import Quickshell.Wayland
 import qs.Commons
 import qs.Commons as Commons
+import "Lock.js" as Lock
 
 Item {
   id: root
@@ -43,7 +48,7 @@ Item {
   readonly property string home: Quickshell.env("HOME")
   readonly property string userName: Quickshell.env("USER") || Quickshell.env("LOGNAME")
   readonly property string currentBackgroundLink: home + "/.local/state/omarchy/current/background"
-  readonly property string unlockedMarker: (Quickshell.env("XDG_RUNTIME_DIR") || "/nonexistent") + "/moarchy/unlocked"
+  readonly property string stateFilePath: (Quickshell.env("XDG_RUNTIME_DIR") || "/nonexistent") + "/moarchy-lock-state"
 
   // Absolute, for the reason moarchy.sim gives at length: a shell restarted
   // outside a login session can come up without /usr/lib/moarchy/bin on PATH.
@@ -55,16 +60,21 @@ Item {
 
   property bool lockRequested: false
   property bool pendingSessionLock: false
-  property bool pamConfigured: false
-  property bool startupLockPending: false
+  // Lock.accountMode's answer, and whether the probe has given one yet.
+  property string accountMode: ""
+  property bool probed: false
+  property bool lockQueued: false
+  property string startup: ""
+  // The panel autostart.lua blanked at a fresh boot, lit once the lock is up.
+  property bool lightWhenSecure: false
   property bool authenticating: false
   property bool settingPin: false
-  property bool setupMode: false
+  readonly property bool setupMode: accountMode === "setup"
+  readonly property bool lockable: Lock.canLock(accountMode)
   property string setupFirst: ""
   property string entered: ""
   property string pendingPin: ""
   property string failureMessage: ""
-  property bool lockoutSeen: false
   property bool paused: false
   // "", "ringing" or "call": the phone plugin's call, as it last told us.
   property string callState: ""
@@ -140,18 +150,28 @@ Item {
   }
 
   function recoverStrandedLock() {
-    if (!strandedLock || locked || !pamConfigured) return
+    if (!strandedLock || locked || !probed) return
 
     strandedLock = false
     logEvent("lock-stranded: recovering")
     beginLock()
   }
 
-  function maybeStartupLock() {
-    if (!startupLockPending || !pamConfigured) return
-    startupLockPending = false
-    if (locked) return
-    logEvent("lock-at-start")
+  // Once the probe has said what the account can do. A phone that cannot be
+  // locked (no PIN yet set through moarchy-pin, no sudo rule) is unlocked, and
+  // its panel is lit rather than left as autostart.lua blanked it.
+  function handleStartup() {
+    var action = startup
+    startup = ""
+    if (action === "" || action === "none" || locked) return
+    if (!lockable) {
+      logEvent("lock-at-start: not possible (" + accountMode + ")")
+      writeState("unlocked")
+      if (action === "boot") Quickshell.execDetached([root.screenTool, "unlock"])
+      return
+    }
+    logEvent("lock-at-start: " + action)
+    lightWhenSecure = action === "boot"
     beginLock()
   }
 
@@ -174,27 +194,29 @@ Item {
     pendingPin = ""
     setupFirst = ""
     failureMessage = paused ? failureMessage : ""
-    lockoutSeen = false
-    authenticating = false
-    if (pam.active) pam.abort()
   }
 
-  function writeMarker(present) {
-    if (present)
-      Quickshell.execDetached(["sh", "-c", "mkdir -p \"${1%/*}\" && : >\"$1\"", "sh", root.unlockedMarker])
-    else
-      Quickshell.execDetached(["rm", "-f", root.unlockedMarker])
+  // From this process and synchronously, so a lock right after an unlock can
+  // never leave the file saying unlocked.
+  function writeState(state) {
+    stateFile.setText(state + "\n")
   }
 
   function beginLock() {
-    if (!pamConfigured) {
-      logEvent("lock-denied: missing-pam")
+    // Before the probe answers there is no telling a keypad from a setup
+    // screen, or from an account no keypad could open. Asked again then.
+    if (!probed) {
+      lockQueued = true
+      return true
+    }
+    if (!lockable) {
+      logEvent("lock-denied: " + accountMode)
       return false
     }
 
     resetAuthenticationState()
     lockRequested = true
-    writeMarker(false)
+    writeState("locked")
     logEvent("lock-requested")
     queueSessionLock()
 
@@ -214,10 +236,8 @@ Item {
     sessionLockStabilizeTimer.stop()
     pendingSessionLockTimer.stop()
     resetAuthenticationState()
-    callState = ""
-    caller = ""
     sessionLock.locked = false
-    writeMarker(true)
+    writeState("unlocked")
     logEvent("unlocked")
   }
 
@@ -250,37 +270,18 @@ Item {
     entered = ""
     pendingPin = pin
     failureMessage = ""
-    lockoutSeen = false
     authenticating = true
-
-    if (!pam.start()) {
-      authenticating = false
-      pendingPin = ""
-      failureMessage = "Could not check the PIN"
-      return
-    }
-
-    Qt.callLater(respondToPrompt)
+    checkProc.running = true
+    helperWatchdog.restart()
   }
 
-  function respondToPrompt() {
-    if (!authenticating || !pam.active || !pam.responseRequired) return
-    // faillock announces a locked tally before pam_unix asks. Answering anyway
-    // would count one more failure and push the pause out two more minutes.
-    if (lockoutSeen) {
-      authenticating = false
-      pendingPin = ""
-      Qt.callLater(function() { if (pam.active) pam.abort() })
-      enterPause()
-      return
-    }
-    pam.respond(pendingPin)
-  }
-
-  function enterPause() {
+  // The helper's count is the real one; this only stops the keys asking
+  // while it would refuse anyway.
+  function enterPause(seconds, message) {
     entered = ""
     paused = true
-    failureMessage = "Too many wrong PINs. Entry is paused for 2 minutes."
+    failureMessage = message
+    pauseTimer.interval = Math.max(1, seconds) * 1000
     pauseTimer.restart()
   }
 
@@ -304,6 +305,7 @@ Item {
     pendingPin = pin
     settingPin = true
     pinProc.running = true
+    helperWatchdog.restart()
   }
 
   function answer() {
@@ -328,6 +330,10 @@ Item {
         root.pendingSessionLock = false
         sessionLockStabilizeTimer.stop()
         pendingSessionLockTimer.stop()
+        if (root.lightWhenSecure) {
+          root.lightWhenSecure = false
+          Quickshell.execDetached([root.screenTool, "unlock"])
+        }
       }
     }
 
@@ -341,16 +347,15 @@ Item {
       }
 
       // The compositor ended the lock without a PIN. The session is unlocked
-      // whatever this shell thinks, so the marker says so, and the next power
-      // press locks again.
+      // whatever this shell thinks, so the state file says so, and the next
+      // power press locks again.
       if (!locked && root.lockRequested) {
         root.lockRequested = false
         root.pendingSessionLock = false
         sessionLockStabilizeTimer.stop()
         pendingSessionLockTimer.stop()
         root.resetAuthenticationState()
-        root.callState = ""
-        root.writeMarker(true)
+        root.writeState("unlocked")
       }
     }
 
@@ -364,36 +369,53 @@ Item {
     }
   }
 
-  PamContext {
-    id: pam
-    config: "moarchy-lock"
-    user: root.userName
+  // The PIN goes in on stdin and the pipe is closed behind it; it is never an
+  // argument or a variable another process can read.
+  Process {
+    id: checkProc
+    command: ["sudo", "-n", root.pinTool, "check"]
+    stdinEnabled: true
+    stdout: StdioCollector { id: checkOut; waitForEnd: true }
 
-    onResponseRequiredChanged: root.respondToPrompt()
-    // faillock says "The account is locked due to 10 failed logins." as an
-    // info message, not an error, before pam_unix prompts (measured against
-    // pam_faillock on Arch with a stand-in for pam_unix).
-    onPamMessage: {
-      if (!pam.responseRequired && /\blocked\b/i.test(pam.message)) root.lockoutSeen = true
-      root.respondToPrompt()
+    onStarted: {
+      checkProc.write(root.pendingPin + "\n")
+      root.pendingPin = ""
+      checkProc.stdinEnabled = false
     }
 
-    onCompleted: function(result) {
-      if (!root.authenticating) return
+    // qmllint disable signal-handler-parameters
+    onExited: function(code, status) {
+      helperWatchdog.stop()
+      checkProc.stdinEnabled = true
       root.authenticating = false
       root.pendingPin = ""
-
       if (!root.lockRequested) return
-      if (result === PamResult.Success) root.finishUnlock()
-      else if (root.lockoutSeen) root.enterPause()
-      else root.failureMessage = "Wrong PIN"
+      var r = Lock.checkResult(code, checkOut.text)
+      if (r.action === "unlock") root.finishUnlock()
+      else if (r.action === "pause") root.enterPause(r.seconds, r.message)
+      else root.failureMessage = r.message
+      // A failure to ask may mean the account is not what the keypad assumed.
+      if (r.action === "error") root.refreshAccount()
     }
+    // qmllint enable signal-handler-parameters
+  }
 
-    onError: function(error) {
-      if (!root.authenticating) return
-      root.authenticating = false
+  // A helper that never answers must not leave the keys dead for good.
+  Timer {
+    id: helperWatchdog
+    interval: 30000
+    onTriggered: {
+      if (checkProc.running) {
+        checkProc.running = false
+        root.authenticating = false
+        root.failureMessage = "Could not check the PIN"
+      }
+      if (pinProc.running) {
+        pinProc.running = false
+        root.settingPin = false
+        root.failureMessage = "Could not set the PIN"
+      }
       root.pendingPin = ""
-      root.failureMessage = "Could not check the PIN"
     }
   }
 
@@ -422,11 +444,12 @@ Item {
 
     // qmllint disable signal-handler-parameters
     onExited: function(code, status) {
+      helperWatchdog.stop()
       root.settingPin = false
       root.pendingPin = ""
       pinProc.stdinEnabled = true
       if (code === 0) {
-        root.setupMode = false
+        root.accountMode = "pin"
         root.logEvent("first-pin-set")
         root.finishUnlock()
         return
@@ -438,33 +461,40 @@ Item {
     // qmllint enable signal-handler-parameters
   }
 
-  // L is the image's locked password and NP an empty one: both are what
-  // `moarchy-pin first` accepts, and neither has a PIN to check. Anything
-  // unreadable stays on the PIN keypad, because the helper decides for itself
-  // and a setup screen it refuses would be a phone nobody can open.
+  // What the account can do, in one line Lock.accountMode reads: `norule` if
+  // sudo will not run the helper, `pin` once moarchy-pin has set a PIN (its
+  // stamp is root's, so nothing the user runs can fake or remove it), and
+  // otherwise passwd's L, NP or P.
   Process {
     id: accountProc
-    command: ["passwd", "-S", root.userName]
+    command: ["sh", "-c",
+              "sudo -n -l \"$1\" check >/dev/null 2>&1 || { echo norule; exit 0; }\n" +
+              "[ -e /var/lib/moarchy/pin-set ] && { echo pin; exit 0; }\n" +
+              "passwd -S \"$2\" 2>/dev/null | awk '{print $2}'",
+              "sh", root.pinTool, root.userName]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var state = String(text || "").trim().split(/\s+/)[1] || ""
-        root.setupMode = state === "L" || state === "NP"
-        root.logEvent("account=" + (state || "unreadable"))
+        root.accountMode = Lock.accountMode(text)
+        root.probed = true
+        root.logEvent("account=" + root.accountMode)
+        if (root.startup !== "") root.handleStartup()
+        if (root.lockQueued) {
+          root.lockQueued = false
+          root.beginLock()
+        }
+        root.recoverStrandedLock()
       }
     }
   }
 
-  Process {
-    id: markerProbe
-    command: ["test", "-e", root.unlockedMarker]
-    // qmllint disable signal-handler-parameters
-    onExited: function(code, status) {
-      if (code === 0) return
-      root.startupLockPending = true
-      root.maybeStartupLock()
-    }
-    // qmllint enable signal-handler-parameters
+  FileView {
+    id: stateFile
+    path: root.stateFilePath
+    blockLoading: true
+    blockWrites: true
+    atomicWrites: true
+    printErrors: false
   }
 
   Process {
@@ -500,11 +530,11 @@ Item {
   }
 
   // Ten seconds on the lock screen with nothing touched turns the panel and the
-  // touchscreen off. Not while a call is up, and not in setup mode, where the
+  // touchscreen off. Not while a call rings, and not in setup mode, where the
   // person holding the phone is reading what it asks.
   IdleMonitor {
     id: idle
-    enabled: root.locked && root.callState === "" && !root.setupMode
+    enabled: root.locked && root.callState !== "ringing" && !root.setupMode
     timeout: 10
     respectInhibitors: false
     onIsIdleChanged: if (idle.isIdle && idle.enabled) root.runBlank()
@@ -554,30 +584,10 @@ Item {
     }
   }
 
-  FileView {
-    path: "/etc/pam.d/moarchy-lock"
-    watchChanges: true
-    printErrors: false
-    onLoaded: root.pamConfigured = true
-    onLoadFailed: root.pamConfigured = false
-    onFileChanged: reload()
-  }
-
-  // No lock before PAM is known good. An answer from before then may be stale --
-  // the failsafe can be cleared from a TTY -- so re-ask rather than act on it.
-  onPamConfiguredChanged: {
-    if (!pamConfigured) return
-
-    strandedLock = false
-    strandedLockResolved = false
-    strandedLockRetryTimer.rearm()
-    checkStrandedLock()
-    maybeStartupLock()
-  }
-
   Component.onCompleted: {
     refreshBackground()
-    markerProbe.running = true
+    startup = Lock.startupAction(stateFile.text())
+    refreshAccount()
     checkStrandedLock()
   }
 
@@ -585,7 +595,7 @@ Item {
     target: "moarchy-lock"
 
     function lock(): string {
-      if (!root.pamConfigured) return "missing-pam"
+      if (root.probed && !root.lockable) return root.accountMode === "legacy" ? "no-pin" : "no-rule"
       if (!root.locked && !root.beginLock()) return "failed"
       return "ok"
     }
@@ -602,7 +612,7 @@ Item {
         sessionLocked: sessionLock.locked,
         secure: sessionLock.secure,
         realScreens: root.realScreenCount(),
-        passwordPam: root.pamConfigured,
+        account: root.accountMode,
         authenticating: root.busy,
         mode: root.mode,
         lastEvent: root.lastEvent,
@@ -615,7 +625,7 @@ Item {
     // up. `state` is ringing, active or none; `caller` is the contact's name
     // when the phone has one, else the number.
     function call(state: string, caller: string): string {
-      var next = state === "ringing" ? "ringing" : (state === "active" ? "call" : "")
+      var next = Lock.callState(state)
       root.callState = next
       root.caller = next === "" ? "" : String(caller || "")
       return "ok"

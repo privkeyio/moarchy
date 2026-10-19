@@ -441,23 +441,14 @@ done
 # first boot, so the image carries none -- the loop above is still the check
 # for that. What it must carry is everything that makes the PIN mean something.
 #
-# The PAM service, with all three faillock lines. Without them wrong PINs are
-# never counted, and a six-digit PIN is a million guesses with nothing between
-# them but pam_unix's two-second delay.
-_pam="$R/etc/pam.d/moarchy-lock"
-if [ ! -f "$_pam" ]; then
-  no "/etc/pam.d/moarchy-lock missing -- the lock screen refuses to lock"
+# unix_chkpwd without its setuid bit. With it, any process can test PINs
+# against the account as fast as yescrypt allows, uncounted, and the PIN is
+# also the sudo password (default/pacman-hooks/20-moarchy-unix-chkpwd.hook).
+if [ -f "$R/usr/bin/unix_chkpwd" ] && [ -z "$(find "$R/usr/bin/unix_chkpwd" -perm /6000)" ]; then
+  ok "unix_chkpwd is not setuid (PIN checks go through moarchy-pin, which counts)"
 else
-  for _fl in 'auth +required +pam_faillock\.so preauth deny=10 unlock_time=120' \
-             'auth +\[default=die\] +pam_faillock\.so authfail deny=10 unlock_time=120' \
-             'auth +required +pam_faillock\.so authsucc deny=10 unlock_time=120'; do
-    _stage=${_fl#*so }; _stage=${_stage%% *}
-    grep -Eq "^${_fl}\$" "$_pam" \
-      && ok "moarchy-lock counts wrong PINs (faillock $_stage)" \
-      || no "moarchy-lock has no faillock $_stage line -- wrong PINs are never counted"
-  done
+  no "unix_chkpwd is setuid or missing -- any process can guess the PIN uncounted"
 fi
-have /usr/lib/tmpfiles.d/moarchy-faillock.conf
 # Upstream's name. Its own lock plugin arms itself when this file exists, and
 # two ext-session-lock clients fighting over one session is a phone neither of
 # them can unlock.
@@ -465,17 +456,21 @@ have /usr/lib/tmpfiles.d/moarchy-faillock.conf
   && no "/etc/pam.d/omarchy-lock-password exists -- upstream's lock would arm beside moarchy.lock (two lockers)" \
   || ok "no omarchy-lock-password (upstream's lock stays inert)"
 
-# The one rule that runs as root with no password. Byte for byte, because
+# The rule that runs as root with no password. Byte for byte, because
 # every way of widening it -- a wildcard after the command, a second command,
 # NOPASSWD: ALL on another line -- is root for anyone holding the phone.
 _sud="$R/etc/sudoers.d/20-moarchy-pin"
 if [ ! -f "$_sud" ]; then
-  no "/etc/sudoers.d/20-moarchy-pin missing -- the first PIN cannot be set"
-elif printf '%%wheel ALL=(root) NOPASSWD: /usr/lib/moarchy/bin/moarchy-pin first\n' | cmp -s - "$_sud"; then
-  ok "20-moarchy-pin is exactly the one first-PIN rule"
+  no "/etc/sudoers.d/20-moarchy-pin missing -- the lock screen can neither check nor set a PIN"
+elif printf '%%wheel ALL=(root) NOPASSWD: /usr/lib/moarchy/bin/moarchy-pin check, /usr/lib/moarchy/bin/moarchy-pin first\n' | cmp -s - "$_sud"; then
+  ok "20-moarchy-pin is exactly the check and first-PIN rule"
 else
-  no "20-moarchy-pin is not exactly the first-PIN rule -- a widened rule is root without a PIN"
+  no "20-moarchy-pin is not exactly the check and first-PIN rule -- a widened rule is root without a PIN"
 fi
+# And no other sudoers file may name the helper: `moarchy-pin set` granted
+# anywhere without a password is a new PIN, and root, for anyone.
+_oth=$(grep -ls 'moarchy-pin' "$R/etc/sudoers" "$R"/etc/sudoers.d/* | grep -vxF "$_sud" | sed "s|^$R||" | tr '\n' ' ')
+[ -z "$_oth" ] && ok "no other sudoers file names moarchy-pin" || no "other sudoers files name moarchy-pin: $_oth"
 [ -f "$_sud" ] && { [ "$(stat -c '%a %u %g' "$_sud")" = "440 0 0" ] \
   && ok "20-moarchy-pin is 0440 root:root" \
   || no "20-moarchy-pin is $(stat -c '%a %U:%G' "$_sud"), not 0440 root:root -- sudo ignores it or anyone may edit it"; }

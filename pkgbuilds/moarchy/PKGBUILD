@@ -195,13 +195,12 @@ pkgver=$_ver
 #    every network it joins (from the next boot; debug images keep mDNS).
 # 10: 50-moarchy.conf's comment no longer says debug images turn mDNS back
 #    on; they are reached over the USB link instead (image/configure.sh).
-# 11: the lock screen. The moarchy.lock plugin, its PAM service
-#     /etc/pam.d/moarchy-lock, the faillock tally that service needs
-#     (/usr/lib/tmpfiles.d/moarchy-faillock.conf), bin/moarchy-pin with the
-#     sudoers rule for its first PIN, bin/moarchy-pin-change, and the power
-#     button, the idle timeout and Settings > Power > Lock taking a real lock
-#     (docs/structure.md I8, docs/gestures.md Q11). A phone holding 0.5.0-10
-#     blanks its panel and never locks.
+# 11: the lock screen. The moarchy.lock plugin, bin/moarchy-pin with the
+#     sudoers rule for checking a PIN and setting the first one,
+#     bin/moarchy-pin-change, the pacman hook that takes unix_chkpwd's setuid
+#     bit, and the power button, the idle timeout and Settings > Power > Lock
+#     taking a real lock (docs/structure.md I8, docs/gestures.md Q11). A phone
+#     holding 0.5.0-10 blanks its panel and never locks.
 pkgrel=11
 pkgdesc="Omarchy's look, keybindings and theming on a phone, under Hyprland"
 arch=('any')
@@ -292,9 +291,7 @@ package() {
          "$pkgdir/usr/share/moarchy/default/themed" \
          "$pkgdir/usr/share/moarchy/default/pacman-hooks" \
          "$pkgdir/usr/share/moarchy/default/polkit" \
-         "$pkgdir/usr/share/moarchy/default/pam" \
          "$pkgdir/usr/share/moarchy/default/sudoers" \
-         "$pkgdir/usr/share/moarchy/default/tmpfiles" \
          "$pkgdir/usr/share/moarchy/default/udev" \
          "$pkgdir/usr/share/moarchy/default/NetworkManager" \
          "$pkgdir/usr/share/moarchy/default/applications" \
@@ -479,25 +476,19 @@ package() {
   install -Dm644 "$_repo/default/polkit/49-moarchy-store.rules" \
     "$pkgdir/usr/share/polkit-1/rules.d/49-moarchy-store.rules"
 
-  # The lock screen's PIN check (moarchy.lock). /etc/pam.d, because that is
-  # the directory Quickshell's PamContext reads by default. Not
-  # omarchy-lock-password, upstream's name, which would arm upstream's own
-  # locker beside this one; the file's header has the rest.
-  install -Dm644 "$_repo/default/pam/moarchy-lock" "$pkgdir/etc/pam.d/moarchy-lock"
-
-  # The one sudo rule the lock screen needs: setting the FIRST PIN, which has
-  # no PIN to authenticate with yet. Exactly one command and one argument, and
-  # bin/moarchy-pin refuses that argument once a PIN exists. The directory is
-  # made 0750 to match the sudo package's own, so pacman has no permissions
-  # conflict to report; check() is what keeps a typo here from breaking sudo
-  # for the whole phone.
+  # The lock screen's two sudo rules: checking a PIN, and setting the FIRST
+  # one, which has no PIN to authenticate with yet. Exactly one command and one
+  # argument each; bin/moarchy-pin counts every check and refuses `first` once
+  # a PIN exists. The directory is made 0750 to match the sudo package's own,
+  # so pacman has no permissions conflict to report; check() is what keeps a
+  # typo here from breaking sudo for the whole phone.
   install -dm750 "$pkgdir/etc/sudoers.d"
   install -m440 "$_repo/default/sudoers/20-moarchy-pin" "$pkgdir/etc/sudoers.d/20-moarchy-pin"
 
-  # The faillock tally /etc/pam.d/moarchy-lock counts in, made for the user at
-  # every boot; the file says why the lock screen cannot make it itself.
-  install -Dm644 "$_repo/default/tmpfiles/moarchy-faillock.conf" \
-    "$pkgdir/usr/lib/tmpfiles.d/moarchy-faillock.conf"
+  # unix_chkpwd loses its setuid bit, so the only uncounted way to test a PIN
+  # goes; the hook says why nothing on the phone needs it.
+  install -Dm644 "$_repo/default/pacman-hooks/20-moarchy-unix-chkpwd.hook" \
+    "$pkgdir/usr/share/libalpm/hooks/20-moarchy-unix-chkpwd.hook"
 
   # The torch tile's permission. 73 so it runs after feedbackd's 72, which
   # tries to do this and cannot on Arch -- the rule's own header has the whole

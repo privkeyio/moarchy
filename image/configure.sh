@@ -46,6 +46,9 @@ EOF
 
 printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$USER_NAME" > "$ROOTDIR/etc/sudoers.d/10-moarchy"
 chmod 440 "$ROOTDIR/etc/sudoers.d/10-moarchy"
+# The moarchy package's pacman hook does this on every pam upgrade; done here
+# too so the image does not depend on the order pacstrap ran hooks in.
+chmod 0755 "$ROOTDIR/usr/bin/unix_chkpwd"
 say "user $USER_NAME (locked password, passwordless sudo, root locked)"
 
 # sshd off by default, and no password logins if someone turns it on.

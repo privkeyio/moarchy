@@ -1,0 +1,27 @@
+# unix_chkpwd without its setuid bit, after every pam install or upgrade.
+#
+# It is how an unprivileged program checks the user's password, and any
+# process may call it, as often as it likes, uncounted. With a six-digit PIN
+# that is also the sudo password, that is a million guesses at about 40ms each:
+# root in an hour across the phone's cores. Nothing on the phone needs it: the
+# lock screen asks bin/moarchy-pin, which counts, and sudo, su, passwd and
+# polkit check passwords as root, where pam_unix reads the hash itself.
+#
+# Also run when moarchy itself is installed or upgraded, so a phone gets this
+# before its first pam upgrade. image/verify.sh fails an image that has the bit.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Path
+Target = usr/bin/unix_chkpwd
+
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = moarchy
+
+[Action]
+Description = Removing unix_chkpwd's setuid bit (PIN checks go through moarchy-pin)
+When = PostTransaction
+Exec = /usr/bin/chmod 0755 /usr/bin/unix_chkpwd

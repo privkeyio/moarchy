@@ -21,8 +21,9 @@
 #
 # While the session is locked a press only toggles the panel (Q11e). There is
 # nothing to lock and nothing a trigger could open in front of the lock.
-# Locked is read off the marker moarchy.lock leaves in $XDG_RUNTIME_DIR while
-# it is unlocked, so the answer costs no IPC round trip.
+# Locked is read off the state file moarchy.lock writes in $XDG_RUNTIME_DIR,
+# so the answer costs no IPC round trip. Anything but `unlocked` -- no lock
+# running, a phone with no PIN yet -- is treated the same: the panel only.
 #
 # A file and not a daemon: the binding is `exec`, so each press is a new process
 # with nothing carried over but what is on disk. Two timestamps in one file
@@ -32,8 +33,11 @@ set -uo pipefail
 
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/moarchy"
 STAMP="$STATE_DIR/power-press"
+# The first press of the last double, which is how its delayed lock knows to
+# stand down. Its own file: the stamp is rewritten by every later press.
+DOUBLE="$STATE_DIR/power-double"
 SCREEN_FLAG="$STATE_DIR/screen-locked"
-UNLOCKED="${XDG_RUNTIME_DIR:-/nonexistent}/moarchy/unlocked"
+LOCK_STATE="${XDG_RUNTIME_DIR:-/nonexistent}/moarchy-lock-state"
 
 # Milliseconds between two presses for the second to count as a double. 400 is
 # Android's own double-press window, and comfortably inside the ~700ms a
@@ -45,7 +49,7 @@ LOCK_AFTER=0.55
 
 now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
 
-[[ -e $UNLOCKED ]] || exec moarchy-screen toggle
+[[ $(cat "$LOCK_STATE" 2>/dev/null) == unlocked ]] || exec moarchy-screen toggle
 
 mkdir -p "$STATE_DIR"
 now=$(now_ms)
@@ -59,8 +63,10 @@ printf '%s\n' "$now" >"$STAMP"
 if (( last > 0 && now - last <= WINDOW_MS )); then
   # A double. Clear the stamp so three presses are a double and then a single,
   # rather than a double and then another double off the same second press.
-  # Clearing it is also what stands the first press's delayed lock down.
   : >"$STAMP"
+  # And the first press's delayed lock stands down. Only a double does that: a
+  # second press just outside the window must not cancel it (no grace period).
+  printf '%s\n' "$last" >"$DOUBLE"
   # Undo the blank the first press just did. `unlock` and not `toggle`: the
   # first press may have been an unlock rather than a lock -- waking the phone
   # and immediately pressing again -- and toggling here would put the screen
@@ -74,7 +80,7 @@ fi
 if [[ ! -e $SCREEN_FLAG ]]; then
   (
     sleep "$LOCK_AFTER"
-    [[ $(cat "$STAMP" 2>/dev/null) == "$now" ]] && omarchy-shell moarchy-lock lock
+    [[ $(cat "$DOUBLE" 2>/dev/null) == "$now" ]] || omarchy-shell moarchy-lock lock
   ) </dev/null >/dev/null 2>&1 &
 fi
 

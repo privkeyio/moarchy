@@ -1,4 +1,8 @@
-// What the lock surface draws: the time, a keypad, and a call when one rings.
+// What the lock surface draws: the time, a keypad, and a call when one is up.
+//
+// The keypad stays on screen during a call, under the call's buttons, so a
+// call card that outlives its call (a lost message from the phone plugin) can
+// never stand between the person holding the phone and the PIN.
 //
 // A keypad of its own for the reasons moarchy.sim gives, plus one that is this
 // screen's alone: ext-session-lock hides the on-screen keyboard, so there is no
@@ -98,7 +102,9 @@ Item {
   }
 
   // ------------------------------------------------------------------ time
+  // Not during a call: the card needs the height, and the call is the news.
   Column {
+    visible: !root.onCall
     anchors.top: parent.top
     anchors.topMargin: Style.space(56)
     anchors.horizontalCenter: parent.horizontalCenter
@@ -195,7 +201,6 @@ Item {
       // ------------------------------------------------------- the keypad
       Text {
         width: parent.width
-        visible: !root.onCall
         horizontalAlignment: Text.AlignHCenter
         text: root.prompt
         color: root.textOnSurface
@@ -206,7 +211,7 @@ Item {
 
       Text {
         width: parent.width
-        visible: !root.onCall && !!root.lock && root.lock.setupMode
+        visible: !!root.lock && root.lock.setupMode
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.WordWrap
         text: "6 to 12 digits. It unlocks the phone from now on."
@@ -218,7 +223,6 @@ Item {
 
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
-        visible: !root.onCall
         spacing: Style.space(9)
         height: Style.space(22)
 
@@ -237,7 +241,7 @@ Item {
 
       Text {
         width: parent.width
-        visible: !root.onCall && !!root.lock && root.lock.failureMessage !== ""
+        visible: !!root.lock && root.lock.failureMessage !== ""
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.WordWrap
         text: root.lock ? root.lock.failureMessage : ""
@@ -249,7 +253,6 @@ Item {
 
       Grid {
         anchors.horizontalCenter: parent.horizontalCenter
-        visible: !root.onCall
         columns: 3
         spacing: Style.space(10)
 
