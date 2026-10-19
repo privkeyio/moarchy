@@ -364,6 +364,8 @@ if [ -z "$(cat "$G/UDC" 2>/dev/null)" ]; then
   echo "$udc" > "$G/UDC"
 fi
 IF=$(cat "$G/functions/ncm.usb0/ifname")
+# sshd's filter names usb0.
+[ "$IF" = usb0 ] || { echo "the link came up as $IF, not usb0" >&2; exit 1; }
 echo 1 > "/proc/sys/net/ipv6/conf/$IF/disable_ipv6"
 ip link set "$IF" up
 ip addr replace 10.66.0.2/30 dev "$IF"
@@ -389,9 +391,10 @@ EOF
     # Bound to the link: no address, no sshd, rather than one on every network.
     install -d "$ROOTDIR/etc/systemd/system/sshd.service.d"
     # systemd starts a unit unfiltered when it cannot load the BPF programs,
-    # so sshd proves the filter holds: from inside its own cgroup, its own
-    # port must be unreachable (the filter drops the SYN, hence the timeout).
-    # If it is reachable, sshd is stopped.
+    # so before sshd binds anything its cgroup proves the filter holds: a
+    # connect to loopback must hang (the filter drops the SYN). Refused or
+    # answered means unfiltered, and sshd does not start. verify.sh holds
+    # this file to exactly these bytes.
     cat >"$ROOTDIR/etc/systemd/system/sshd.service.d/20-moarchy-usbnet.conf" <<'EOF'
 [Unit]
 Requires=moarchy-usbnet.service
@@ -401,7 +404,7 @@ After=moarchy-usbnet.service
 RestrictNetworkInterfaces=usb0
 IPAddressDeny=any
 IPAddressAllow=10.66.0.1
-ExecStartPost=/usr/bin/bash -c '! timeout 3 bash -c "exec 3<>/dev/tcp/10.66.0.2/22" 2>/dev/null'
+ExecStartPre=/usr/bin/bash -c 'timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/9" 2>/dev/null; [ $$? = 124 ]'
 EOF
     printf 'ListenAddress 10.66.0.2\nAllowUsers %s@10.66.0.1\n' "$USER_NAME" \
       >"$ROOTDIR/etc/ssh/sshd_config.d/20-moarchy-usbnet.conf"

@@ -57,8 +57,8 @@ if [ "${DEV_IMAGE:-0}" = 1 ]; then
   printf 'ListenAddress=0.0.0.0\n' > $W/r/etc/ssh/sshd_config.d/99-planted.conf
   # d2. a Match block that opens sshd to the LAN
   printf 'Match Address 192.168.0.0/16\n  AllowUsers *\n' >> $W/r/etc/ssh/sshd_config.d/99-planted.conf
-  # d3. sshd's packet filter dropped
-  sed -i '/^RestrictNetworkInterfaces=/d' $W/r/etc/systemd/system/sshd.service.d/20-moarchy-usbnet.conf
+  # d3. sshd's packet filter widened to Wi-Fi by one added line
+  echo 'RestrictNetworkInterfaces=wlan0' >> $W/r/etc/systemd/system/sshd.service.d/20-moarchy-usbnet.conf
   # d4. a drop-in that could reset it
   printf '[Service]\nIPAddressDeny=\n' > $W/r/etc/systemd/system/sshd.service.d/99-planted.conf
   # d5. IPv6 left on for the USB host to configure
@@ -66,8 +66,16 @@ if [ "${DEV_IMAGE:-0}" = 1 ]; then
   # d6. a type-wide drop-in that resets the filter for every service
   mkdir -p $W/r/etc/systemd/system/service.d
   printf '[Service]\nRestrictNetworkInterfaces=\n' > $W/r/etc/systemd/system/service.d/99-planted.conf
-  # d7. the self-test that stops an unfiltered sshd, removed
-  sed -i '/^ExecStartPost=/d' $W/r/etc/systemd/system/sshd.service.d/20-moarchy-usbnet.conf
+  # d7. a slice drop-in whose allow list every unit under it inherits
+  mkdir -p $W/r/etc/systemd/system/system.slice.d
+  printf '[Slice]\nIPAddressAllow=any\n' > $W/r/etc/systemd/system/system.slice.d/99-planted.conf
+  # d8. a whole replacement sshd.service
+  cp $W/r/usr/lib/systemd/system/sshd.service $W/r/etc/systemd/system/sshd.service
+  # d9. NetworkManager allowed to take the link
+  sed -i 's/^unmanaged-devices=/#&/' $W/r/etc/NetworkManager/conf.d/90-moarchy-usbnet.conf
+  # d10. a socket-activated sshd, outside sshd.service's drop-ins
+  mkdir -p $W/r/etc/systemd/system/sockets.target.wants
+  ln -sf /usr/lib/systemd/system/sshd.socket $W/r/etc/systemd/system/sockets.target.wants/sshd.socket
   umount $W/r
   img2simg $W/root.raw $W/bad/rootfs.simg || { echo "img2simg failed"; exit 1; }
   rm -f $W/root.raw
@@ -83,11 +91,14 @@ if [ "${DEV_IMAGE:-0}" = 1 ]; then
   catches "listens on '0.0.0.0:22 10.66.0.2:22 '" "a second sshd listener"
   catches "AllowUsers is '\* ', not moarchy@10.66.0.1 alone (as seen from 192.168.1.5)" \
                                           "a Match block opening sshd to the LAN"
-  catches "not confined to usb0"          "sshd's packet filter removed"
+  catches "drop-in is not the one configure.sh writes" "sshd's packet filter widened to Wi-Fi"
   catches "could undo.*sshd.service.d/99-planted.conf" "a drop-in that could reset the filter"
   catches "could undo.*/etc/systemd/system/service.d/99-planted.conf" "a type-wide drop-in resetting the filter"
-  catches "does not test its filter"      "the filter self-test removed"
+  catches "could undo.*/etc/systemd/system/system.slice.d/99-planted.conf" "a slice drop-in widening the filter"
+  catches "could undo.*/etc/systemd/system/sshd.service\( \|$\)" "a replacement sshd.service"
   catches "accepts IPv6 router"           "IPv6 left on usb0"
+  catches "NetworkManager could manage the link" "NetworkManager allowed to take the link"
+  catches "ssh socket unit is enabled"    "a socket-activated sshd"
   echo
   if [ $rc -ne 0 ]; then ok "verify.sh exited non-zero ($rc)"; else no "verify.sh exited 0 on a broken dev image"; fi
   [ $FAIL = 0 ] && printf '  \033[32mthe verifier detects every planted defect\033[0m\n' \

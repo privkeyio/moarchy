@@ -492,30 +492,49 @@ else
   [ -x "$R/usr/local/sbin/moarchy-usbnet" ] || no "moarchy-usbnet is not executable"
   [ -L "$R/etc/systemd/system/multi-user.target.wants/moarchy-usbnet.service" ] \
     && ok "moarchy-usbnet.service enabled" || no "moarchy-usbnet.service not enabled"
-  _sd="$R/etc/systemd/system/sshd.service.d/20-moarchy-usbnet.conf"
-  grep -qx 'Requires=moarchy-usbnet.service' "$_sd" 2>/dev/null \
-    && ok "sshd requires the USB link" || no "sshd does not require the USB link -- it could start without it"
   # Linux delivers a packet for 10.66.0.2 that arrives on wlan0, so the
-  # ListenAddress below keeps nobody out on its own; these do.
-  if grep -qx 'RestrictNetworkInterfaces=usb0' "$_sd" 2>/dev/null && grep -qx 'IPAddressDeny=any' "$_sd" &&
-     grep -qx 'IPAddressAllow=10.66.0.1' "$_sd"; then
-    ok "sshd's traffic is confined to usb0 and 10.66.0.1"
+  # ListenAddress below keeps nobody out on its own; this drop-in does. Exact
+  # bytes, because an added line widens it as surely as a missing one: a
+  # second RestrictNetworkInterfaces adds an interface.
+  _sd="$R/etc/systemd/system/sshd.service.d/20-moarchy-usbnet.conf"
+  if cmp -s "$_sd" - <<'EOF'
+[Unit]
+Requires=moarchy-usbnet.service
+After=moarchy-usbnet.service
+
+[Service]
+RestrictNetworkInterfaces=usb0
+IPAddressDeny=any
+IPAddressAllow=10.66.0.1
+ExecStartPre=/usr/bin/bash -c 'timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/9" 2>/dev/null; [ $$? = 124 ]'
+EOF
+  then
+    ok "sshd needs the link, is confined to usb0 and 10.66.0.1, and will not start unfiltered"
   else
-    no "sshd's traffic is not confined to usb0 and 10.66.0.1 -- Wi-Fi peers can reach it"
+    no "sshd's drop-in is not the one configure.sh writes -- its filter or its self-test is changed"
   fi
-  grep -qF "ExecStartPost=/usr/bin/bash -c '! timeout 3 bash -c \"exec 3<>/dev/tcp/10.66.0.2/22\"" "$_sd" 2>/dev/null \
-    && ok "sshd stops if the filter is not enforced" || no "sshd does not test its filter -- without BPF it would start unfiltered"
-  # Another drop-in could reset those settings with an empty assignment:
-  # any for sshd.service, or a type-wide service.d one that names them.
+  # Anything else that could reset or widen that: another sshd.service drop-in
+  # or a whole replacement unit, and the type-wide or slice drop-ins that name
+  # those settings (a slice's IPAddressAllow adds to every unit under it).
   _od=$(find "$R"/etc/systemd/system/sshd.service.d "$R"/usr/lib/systemd/system/sshd.service.d \
-    "$R"/usr/local/lib/systemd/system/sshd.service.d -mindepth 1 ! -path "$_sd" 2>/dev/null | sed "s|^$R||")
-  _od="$_od $(grep -lsE '^\s*(RestrictNetworkInterfaces|IPAddress(Allow|Deny)|ExecStartPost)\s*=' \
-    "$R"/etc/systemd/system/service.d/* "$R"/usr/lib/systemd/system/service.d/* \
-    "$R"/usr/local/lib/systemd/system/service.d/* | sed "s|^$R||")"
+    "$R"/usr/local/lib/systemd/system/sshd.service.d "$R"/etc/systemd/system.control/sshd.service.d \
+    -mindepth 1 ! -path "$_sd" 2>/dev/null | sed "s|^$R||")
+  for _f in /etc/systemd/system/sshd.service /usr/local/lib/systemd/system/sshd.service; do
+    { [ -e "$R$_f" ] || [ -L "$R$_f" ]; } && _od="$_od $_f"
+  done
+  _od="$_od $(for _d in etc/systemd/system usr/lib/systemd/system usr/local/lib/systemd/system etc/systemd/system.control; do
+    grep -lsE '^\s*(RestrictNetworkInterfaces|IPAddress(Allow|Deny)|ExecStartPre|SuccessExitStatus)\s*=' \
+      "$R/$_d"/service.d/* "$R/$_d"/slice.d/* "$R/$_d"/-.slice.d/* "$R/$_d"/system.slice.d/*
+  done | sed "s|^$R||")"
   _od=$(echo $_od)
-  [ -z "$_od" ] && ok "no other drop-in can reset sshd's filter" || no "other drop-ins could undo the link's sshd filter: $_od"
-  grep -q 'disable_ipv6' "$R/usr/local/sbin/moarchy-usbnet" 2>/dev/null \
+  [ -z "$_od" ] && ok "nothing else can reset or widen sshd's filter" || no "other units or drop-ins could undo the link's sshd filter: $_od"
+  grep -qxF 'echo 1 > "/proc/sys/net/ipv6/conf/$IF/disable_ipv6"' "$R/usr/local/sbin/moarchy-usbnet" 2>/dev/null \
     && ok "usb0 takes no IPv6" || no "usb0 accepts IPv6 router advertisements from the USB host"
+  grep -qx 'unmanaged-devices=mac:02:00:00:6d:6f:02' "$R/etc/NetworkManager/conf.d/90-moarchy-usbnet.conf" 2>/dev/null \
+    && ok "NetworkManager leaves the link alone" || no "NetworkManager could manage the link and change its address"
+  # sshd@ instances from a socket unit get none of sshd.service's drop-ins.
+  _ss=$(ls "$R"/etc/systemd/system/sockets.target.wants/ 2>/dev/null | grep -i ssh | tr '\n' ' ')
+  [ -z "$_ss" ] && ok "no ssh socket unit enabled" || no "an ssh socket unit is enabled, outside the link's filter: $_ss"
   # sshd's own parser, not a grep: it follows Include, accepts keyword=value
   # and quotes, and applies Match. Probed as the PC and as a LAN host, so a
   # Match that opens sshd to some other address shows up too.
