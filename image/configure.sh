@@ -9,6 +9,7 @@ ROOTDIR=$1
 USER_NAME=${MOARCHY_USER:-moarchy}
 
 say() { printf '    %s\n' "$*"; }
+die() { printf '!! %s\n' "$*" >&2; exit 1; }
 
 # --- the user (I8) ---------------------------------------------------------
 # DanctNIX ships `alarm` with the password 123456 and root with `root`. Neither
@@ -317,9 +318,13 @@ fi
 #
 # And sshd answers on the USB cable only. The phone becomes 10.66.0.2 on a USB
 # network gadget (NCM, a /30 with the PC at 10.66.0.1); sshd listens on that
-# address alone and admits the user from 10.66.0.1 alone, so no Wi-Fi or mobile
-# network the phone joins can reach it, and mDNS stays off. On the PC, give the
-# interface with MAC 02:00:00:6d:6f:01 the address 10.66.0.1/30.
+# address alone and admits the user from 10.66.0.1 alone, and mDNS stays off.
+# Listening on 10.66.0.2 is not enough by itself: Linux takes a packet for any
+# local address on any interface, so a Wi-Fi neighbor that routes 10.66.0.2
+# via the phone would reach sshd. sshd's cgroup therefore only passes packets
+# on usb0, to and from 10.66.0.1. usb0 also gets no IPv6, so whatever is on
+# the other end of the cable cannot become the phone's router. On the PC, give
+# the interface with MAC 02:00:00:6d:6f:01 the address 10.66.0.1/30.
 if [ -n "${MOARCHY_SSH_KEY:-}" ]; then
   if [ ! -f "$MOARCHY_SSH_KEY" ]; then
     say "!! MOARCHY_SSH_KEY=$MOARCHY_SSH_KEY does not exist; no key preseeded"
@@ -341,7 +346,9 @@ mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
 for _ in $(seq 30); do [ -n "$(ls /sys/class/udc 2>/dev/null)" ] && break; sleep 1; done
 udc=$(ls /sys/class/udc | head -1)
 [ -n "$udc" ] || { echo "no USB device controller" >&2; exit 1; }
-if [ ! -d "$G" ]; then
+# Every step is safe to repeat, and an unbound gadget is built again, so a
+# restart after any failure picks up where it stopped.
+if [ -z "$(cat "$G/UDC" 2>/dev/null)" ]; then
   mkdir -p "$G/strings/0x409" "$G/configs/c.1/strings/0x409" "$G/functions/ncm.usb0"
   echo 0x1d6b > "$G/idVendor"; echo 0x0104 > "$G/idProduct"
   echo moarchy > "$G/strings/0x409/manufacturer"
@@ -350,10 +357,11 @@ if [ ! -d "$G" ]; then
   echo 02:00:00:6d:6f:01 > "$G/functions/ncm.usb0/host_addr"
   echo 02:00:00:6d:6f:02 > "$G/functions/ncm.usb0/dev_addr"
   echo ncm > "$G/configs/c.1/strings/0x409/configuration"
-  ln -s "$G/functions/ncm.usb0" "$G/configs/c.1/"
+  [ -L "$G/configs/c.1/ncm.usb0" ] || ln -s "$G/functions/ncm.usb0" "$G/configs/c.1/"
   echo "$udc" > "$G/UDC"
 fi
 IF=$(cat "$G/functions/ncm.usb0/ifname")
+echo 1 > "/proc/sys/net/ipv6/conf/$IF/disable_ipv6"
 ip link set "$IF" up
 ip addr replace 10.66.0.2/30 dev "$IF"
 EOF
@@ -372,11 +380,12 @@ ExecStart=/usr/local/sbin/moarchy-usbnet
 WantedBy=multi-user.target
 EOF
     install -d "$ROOTDIR/etc/NetworkManager/conf.d"
-    printf '[keyfile]\nunmanaged-devices=interface-name:usb0\n' \
+    # By the phone side's MAC, which is fixed, rather than a name the kernel picks.
+    printf '[keyfile]\nunmanaged-devices=mac:02:00:00:6d:6f:02\n' \
       >"$ROOTDIR/etc/NetworkManager/conf.d/90-moarchy-usbnet.conf"
     # Bound to the link: no address, no sshd, rather than one on every network.
     install -d "$ROOTDIR/etc/systemd/system/sshd.service.d"
-    printf '[Unit]\nRequires=moarchy-usbnet.service\nAfter=moarchy-usbnet.service\n' \
+    printf '[Unit]\nRequires=moarchy-usbnet.service\nAfter=moarchy-usbnet.service\n\n[Service]\nRestrictNetworkInterfaces=usb0\nIPAddressDeny=any\nIPAddressAllow=10.66.0.1\n' \
       >"$ROOTDIR/etc/systemd/system/sshd.service.d/20-moarchy-usbnet.conf"
     printf 'ListenAddress 10.66.0.2\nAllowUsers %s@10.66.0.1\n' "$USER_NAME" \
       >"$ROOTDIR/etc/ssh/sshd_config.d/20-moarchy-usbnet.conf"

@@ -114,8 +114,9 @@ jobs:
           ( cd "$ART" && sha256sum ./* > SHA256SUMS && cat SHA256SUMS )
 
       # The dev image (MOARCHY_SSH_KEY) with a key made for this run and thrown
-      # away with the runner, verified as one, and never uploaded. Built outside
-      # the tree, which build-image.sh would otherwise call dirty.
+      # away with the runner, verified as one, put through its own negative
+      # test, and never uploaded. Built outside images/, so nothing that picks
+      # the newest artifact there can pick it up.
       - name: Dev image
         run: |
           set -o pipefail
@@ -124,7 +125,10 @@ jobs:
             ./scripts/build-image.sh 2>&1 | tee -a "$LOG"
           sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/dev-images"
           dev=$(ls -td "$RUNNER_TEMP"/dev-images/moarchy-sargo-*/ | head -1)
-          DEV_IMAGE=1 ./scripts/verify-image.sh "${dev%/}" 2>&1 | tee -a "$LOG"
+          dev=${dev%/}
+          DEV_IMAGE=1 ./scripts/verify-image.sh "$dev" 2>&1 | tee -a "$LOG"
+          docker run --rm --privileged --platform linux/arm64 -e DEV_IMAGE=1 -v "$(dirname "$dev"):/img:ro" \
+            --entrypoint bash moarchy-image /repo/image/negative-test.sh "/img/$(basename "$dev")" 2>&1 | tee -a "$LOG"
           sudo rm -rf "$RUNNER_TEMP/dev-images"
 
       # Not for a pull request from another repository: an unsigned, flashable

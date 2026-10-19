@@ -492,17 +492,40 @@ else
   [ -x "$R/usr/local/sbin/moarchy-usbnet" ] || no "moarchy-usbnet is not executable"
   [ -L "$R/etc/systemd/system/multi-user.target.wants/moarchy-usbnet.service" ] \
     && ok "moarchy-usbnet.service enabled" || no "moarchy-usbnet.service not enabled"
-  grep -qx 'Requires=moarchy-usbnet.service' "$R/etc/systemd/system/sshd.service.d/20-moarchy-usbnet.conf" 2>/dev/null \
+  _sd="$R/etc/systemd/system/sshd.service.d/20-moarchy-usbnet.conf"
+  grep -qx 'Requires=moarchy-usbnet.service' "$_sd" 2>/dev/null \
     && ok "sshd requires the USB link" || no "sshd does not require the USB link -- it could start without it"
-  # Every ListenAddress and AllowUsers sshd reads, from the main file and every
-  # drop-in: only the cable's.
-  _sc=$(cat "$R/etc/ssh/sshd_config" "$R"/etc/ssh/sshd_config.d/*.conf 2>/dev/null | sed 's/#.*//')
-  _la=$(printf '%s\n' "$_sc" | awk 'tolower($1) == "listenaddress" { print $2 }' | sort -u | tr '\n' ' ')
-  _au=$(printf '%s\n' "$_sc" | awk 'tolower($1) == "allowusers" { $1 = ""; print }' | sed 's/^ //')
-  [ "$_la" = "10.66.0.2 " ] && ok "sshd listens on 10.66.0.2 only" \
-                           || no "sshd listens on '${_la:-every address}', not 10.66.0.2 alone"
-  [ "$_au" = "moarchy@10.66.0.1" ] && ok "sshd admits moarchy from 10.66.0.1 only" \
-                                  || no "sshd AllowUsers is '${_au:-unset}', not moarchy@10.66.0.1 alone"
+  # Linux delivers a packet for 10.66.0.2 that arrives on wlan0, so the
+  # ListenAddress below keeps nobody out on its own; these do.
+  if grep -qx 'RestrictNetworkInterfaces=usb0' "$_sd" 2>/dev/null && grep -qx 'IPAddressDeny=any' "$_sd" &&
+     grep -qx 'IPAddressAllow=10.66.0.1' "$_sd"; then
+    ok "sshd's traffic is confined to usb0 and 10.66.0.1"
+  else
+    no "sshd's traffic is not confined to usb0 and 10.66.0.1 -- Wi-Fi peers can reach it"
+  fi
+  # A second drop-in could reset those settings with an empty assignment.
+  _od=$(find "$R"/etc/systemd/system/sshd.service.d "$R"/usr/lib/systemd/system/sshd.service.d -mindepth 1 \
+    ! -path "$_sd" 2>/dev/null | sed "s|^$R||" | tr '\n' ' ')
+  [ -z "$_od" ] && ok "no other sshd.service drop-ins" || no "other sshd.service drop-ins could undo the link's: $_od"
+  grep -q 'disable_ipv6' "$R/usr/local/sbin/moarchy-usbnet" 2>/dev/null \
+    && ok "usb0 takes no IPv6" || no "usb0 accepts IPv6 router advertisements from the USB host"
+  # sshd's own parser, not a grep: it follows Include, accepts keyword=value
+  # and quotes, and applies Match. Probed as the PC and as a LAN host, so a
+  # Match that opens sshd to some other address shows up too.
+  chroot "$R" ssh-keygen -q -t ed25519 -N '' -f /tmp/verify-hostkey </dev/null >/dev/null 2>&1
+  for _a in 10.66.0.1 192.168.1.5; do
+    _t=$(chroot "$R" /usr/bin/sshd -T -h /tmp/verify-hostkey \
+      -C "user=moarchy,addr=$_a,host=probe,laddr=10.66.0.2,lport=22" 2>&1)
+    _la=$(printf '%s\n' "$_t" | awk 'tolower($1) == "listenaddress" { print $2 }' | sort -u | tr '\n' ' ')
+    _au=$(printf '%s\n' "$_t" | awk 'tolower($1) == "allowusers" { print $2 }' | tr '\n' ' ')
+    _pa=$(printf '%s\n' "$_t" | awk 'tolower($1) == "passwordauthentication" { print $2 }')
+    [ "$_la" = "10.66.0.2:22 " ] && ok "sshd listens on 10.66.0.2 only (as seen from $_a)" \
+                                || no "sshd listens on '${_la:-nothing: $(printf '%s' "$_t" | tail -1)}', not 10.66.0.2 alone (as seen from $_a)"
+    [ "$_au" = "moarchy@10.66.0.1 " ] && ok "sshd admits moarchy from 10.66.0.1 only (as seen from $_a)" \
+                                     || no "sshd AllowUsers is '${_au:-unset}', not moarchy@10.66.0.1 alone (as seen from $_a)"
+    [ "$_pa" = no ] || no "sshd allows password auth (as seen from $_a)"
+  done
+  rm -f "$R/tmp/verify-hostkey" "$R/tmp/verify-hostkey.pub"
 fi
 grep -qi '^PasswordAuthentication no' "$R/etc/ssh/sshd_config.d/10-moarchy.conf" 2>/dev/null \
   && ok "sshd password auth disabled" || no "sshd password auth not disabled"
@@ -748,4 +771,6 @@ if [ $FAIL = 0 ]; then
 else
   printf '  \033[31msome checks failed\033[0m\n'
 fi
+# A DEV_IMAGE=1 left exported would pass a dev image as if it were a release.
+[ "${DEV_IMAGE:-0}" = 1 ] && printf '  \033[33mverified as a DEV image (DEV_IMAGE=1): NOT PUBLISHABLE\033[0m\n'
 exit $FAIL

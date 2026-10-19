@@ -368,6 +368,8 @@ invisible over the cable and the shell in D23 is postmarketOS's rather than
 ours. That is the gap worth closing next, and it belongs in the rootfs as a
 systemd unit now that there is no initramfs to put it in. **?**
 
+*Amended 2026-10-19:* a debug image built with `MOARCHY_SSH_KEY` raises one, NCM, as `moarchy-usbnet.service` (structure.md I5). A published image still raises none.
+
 **D15** AVB must be defeated or the Android 12 bootloader rejects an unsigned
 kernel. The backend generates an empty vbmeta with the verification-disabled
 flag — `avbtool make_vbmeta_image --flags 2 --padding_size 4096` — and flashes

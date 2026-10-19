@@ -4,7 +4,7 @@
 #   ./scripts/provision.sh build      # the packages, first
 #   ./scripts/build-image.sh          # -> images/moarchy-sargo-<version>-<date>/
 #
-# For a debug image that joins your wifi on first boot and enables sshd:
+# For a debug image that joins your wifi on first boot:
 #
 #   WIFI_SSID='MyNetwork' WIFI_PSK='secret' ./scripts/build-image.sh
 #

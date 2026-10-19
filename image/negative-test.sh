@@ -50,6 +50,43 @@ sed -i 's/--set-active/--no-such-flag/g' $W/bad/flash.sh
 echo "==> expanding the rootfs to plant the rest"
 simg2img "$ART/rootfs.simg" $W/root.raw || { echo "simg2img failed"; exit 1; }
 mount -o loop $W/root.raw $W/r || { echo "mount failed"; exit 1; }
+if [ "${DEV_IMAGE:-0}" = 1 ]; then
+  # A dev image, verified as one: the defects are the ways its way in could
+  # widen past the cable.
+  # d1. a second listener, in the keyword=value form sshd accepts
+  printf 'ListenAddress=0.0.0.0\n' > $W/r/etc/ssh/sshd_config.d/99-planted.conf
+  # d2. a Match block that opens sshd to the LAN
+  printf 'Match Address 192.168.0.0/16\n  AllowUsers *\n' >> $W/r/etc/ssh/sshd_config.d/99-planted.conf
+  # d3. sshd's packet filter dropped
+  sed -i '/^RestrictNetworkInterfaces=/d' $W/r/etc/systemd/system/sshd.service.d/20-moarchy-usbnet.conf
+  # d4. a drop-in that could reset it
+  printf '[Service]\nIPAddressDeny=\n' > $W/r/etc/systemd/system/sshd.service.d/99-planted.conf
+  # d5. IPv6 left on for the USB host to configure
+  sed -i '/disable_ipv6/d' $W/r/usr/local/sbin/moarchy-usbnet
+  umount $W/r
+  img2simg $W/root.raw $W/bad/rootfs.simg || { echo "img2simg failed"; exit 1; }
+  rm -f $W/root.raw
+  echo "==> running DEV_IMAGE=1 verify.sh against it (it MUST fail)"
+  DEVICE=sargo WORK=/ntverify bash /repo/image/verify.sh $W/bad > $W/out.txt 2>&1
+  rc=$?
+  sed -e 's/\x1b\[[0-9;]*m//g' $W/out.txt > $W/plain.txt
+  catches() { if grep -q "FAIL.*$1" $W/plain.txt; then ok "caught: $2"; else no "MISSED: $2"; fi; }
+  echo; echo "==> did each break get caught?"
+  catches "ANDROID!"                      "corrupted boot image header"
+  catches "vbmeta flags"                  "AVB verification left enabled"
+  catches "set-active"                    "flash.sh no longer resets the retry counter"
+  catches "listens on '0.0.0.0:22 10.66.0.2:22 '" "a second sshd listener"
+  catches "AllowUsers is '\* ', not moarchy@10.66.0.1 alone (as seen from 192.168.1.5)" \
+                                          "a Match block opening sshd to the LAN"
+  catches "not confined to usb0"          "sshd's packet filter removed"
+  catches "drop-ins could undo"           "a drop-in that could reset the filter"
+  catches "accepts IPv6 router"           "IPv6 left on usb0"
+  echo
+  if [ $rc -ne 0 ]; then ok "verify.sh exited non-zero ($rc)"; else no "verify.sh exited 0 on a broken dev image"; fi
+  [ $FAIL = 0 ] && printf '  \033[32mthe verifier detects every planted defect\033[0m\n' \
+                || printf '  \033[31mthe verifier is blind to something\033[0m\n'
+  exit $FAIL
+fi
 # 4. a credential the image must never carry
 mkdir -p $W/r/etc/NetworkManager/system-connections
 echo "[connection]" > $W/r/etc/NetworkManager/system-connections/leaked.nmconnection
