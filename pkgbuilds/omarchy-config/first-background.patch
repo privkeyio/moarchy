@@ -1,0 +1,12 @@
+diff --git a/shell/plugins/background/Background.qml b/shell/plugins/background/Background.qml
+--- a/shell/plugins/background/Background.qml
++++ b/shell/plugins/background/Background.qml
+@@ -53,7 +53,7 @@
+     if (instant || !displayedBackground) {
+       oldBackground = ""
+       incomingBackground = ""
+-      displayedBackground = path
++      displayedBackground = finalPath
+       revealProgress = 1
+       return
+     }
