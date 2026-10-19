@@ -79,7 +79,7 @@ jobs:
       # Saved now, before anything runs privileged, so nothing an image build
       # executes can change what later runs restore.
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always() && steps.kernel.outputs.cache-hit != 'true' && hashFiles('.cache/kernel/*') != ''
+        if: ${{ !cancelled() && steps.kernel.outputs.cache-hit != 'true' && hashFiles('.cache/kernel/*') != '' }}
         with:
           path: .cache/kernel
           key: ${{ env.KERNEL_KEY }}
@@ -87,7 +87,7 @@ jobs:
       - name: Packages from the published repo
         run: |
           set -o pipefail
-          ./scripts/fetch-published.sh 2>&1 | tee -a "$LOG"
+          ./scripts/fetch-published.sh packages 2>&1 | tee -a "$LOG"
 
       - name: Build the image
         run: |

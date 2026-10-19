@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fill the gaps in packages/ from the signed [moarchy] repo the manifest names.
 #
-#   scripts/fetch-published.sh [packages-dir]
+#   scripts/fetch-published.sh <packages-dir>
 #
 # For a PKGBUILD_ONLY build (CI): every package this tree built is already in
 # packages/ and wins. A name only the published repo has is downloaded, checked
@@ -10,12 +10,18 @@
 # it. The published repo is built from upstream's pins, which can trail
 # manifest.toml, so an image made this way tests this tree's packages, not a
 # release.
+#
+# The directory is required, not defaulted to packages/: a later full build
+# there would find these files under their own names, keep them, and vouch for
+# upstream's bytes as this tree's. CI's runners are thrown away; locally, point
+# it at a copy.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PKGS="${1:-$REPO_ROOT/packages}"
+PKGS="${1:?usage: fetch-published.sh <packages-dir>}"
 CACHE="${PKGCACHE:-$REPO_ROOT/.cache/published}"
 . "$REPO_ROOT/scripts/manifest.sh"
+. "$REPO_ROOT/scripts/pkgset.sh"
 
 server=$(manifest_get repo server) || exit 1
 keyid=$(manifest_get repo keyid) || exit 1
@@ -52,7 +58,7 @@ verify "$CACHE/$name.db"
 # after it). One the build did not vouch for is an error, not a gap for the
 # published copy to fill: CI would pass on upstream's bytes.
 built=$(awk 'NF == 2 && $2 ~ /\.pkg\.tar\./ { print $2 }' "$PKGS/.build-manifest")
-have=$(printf '%s\n' "$built" | sed -e 's/\.pkg\.tar\..*$//' -e 's/-[^-]*-[^-]*-[^-]*$//')
+have=$(printf '%s\n' "$built" | while read -r f; do [ -z "$f" ] || pkgset_name "$f"; done)
 for d in "$REPO_ROOT"/pkgbuilds/*/; do
   p=$(basename "$d")
   printf '%s\n' "$have" | grep -qxF -e "$p" ||

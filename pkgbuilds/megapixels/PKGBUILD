@@ -50,7 +50,8 @@ _ver=$(manifest_get megapixels version) || return 1
 
 pkgname=megapixels
 pkgver=$_ver
-pkgrel=1
+# 2: declares libpulse, which movie_audio_rec links (libpulse-simple).
+pkgrel=2
 pkgdesc="The Linux-phone camera application, with the DNG profile lookup fixed"
 arch=('aarch64')
 url="$_url"
@@ -58,7 +59,7 @@ license=('GPL-3.0-or-later')
 
 # Arch's own runtime list, read off the installed package rather than guessed.
 depends=('feedbackd' 'glib2' 'gtk4' 'imagemagick' 'libdng' 'libepoxy'
-         'libjpeg-turbo' 'libmegapixels' 'libraw' 'zbar')
+         'libjpeg-turbo' 'libmegapixels' 'libpulse' 'libraw' 'zbar')
 makedepends=('meson' 'ninja' 'pkgconf' 'gperf' 'gtk4' 'libdng' 'libmegapixels'
              'libepoxy' 'zbar' 'feedbackd' 'libjpeg-turbo' 'libpulse')
 

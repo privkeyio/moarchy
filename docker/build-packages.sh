@@ -144,10 +144,12 @@ clone_pinned() {   # clone_pinned <url> <dir> <ref> [extra git-clone args...]
 # Order is the manifest's, and the keyboard is pinned first because it is the
 # component whose absence leaves the phone with no way to type at all.
 # PKGBUILD_ONLY names the in-repo recipes to build; everything else is expected
-# to come from the published repo (scripts/fetch-published.sh). Unset, this
-# builds the whole set as before.
+# to come from the published repo (scripts/fetch-published.sh). Unset or blank,
+# this builds the whole set as before. Read, not word-split, so a name is never
+# a glob.
+read -r -a only <<< "$(printf '%s' "${PKGBUILD_ONLY:-}" | tr '\n\t' '  ')"
 for component in $(manifest_components); do
-  [ -n "${PKGBUILD_ONLY:-}" ] && continue
+  (( ${#only[@]} )) && continue
   c_url=$(manifest_get "$component" url) || { failed+=("$component"); continue; }
   c_ref=$(manifest_get "$component" ref) || { failed+=("$component"); continue; }
   c_dir=$(manifest_get "$component" pkgbuilddir) || { failed+=("$component"); continue; }
@@ -180,7 +182,7 @@ done
 packages=$(manifest_aur_packages) || exit 1
 
 for pkg in $packages; do
-  [ -n "${PKGBUILD_ONLY:-}" ] && continue
+  (( ${#only[@]} )) && continue
   ref=$(manifest_get "aur.$pkg" ref) || { failed+=("$pkg"); continue; }
   echo "==> $pkg @ ${ref:0:7}"
   # No --filter here: the AUR's git server does not have to support partial
@@ -217,15 +219,13 @@ if [ -d /repo/pkgbuilds ]; then
   cp -a /repo /home/builder/repo
   chown -R builder /home/builder/repo
 
-  # Read, not word-split, so a name is never a glob.
-  read -r -a only <<< "$(printf '%s' "${PKGBUILD_ONLY:-}" | tr '\n\t' '  ')"
   for p in "${only[@]}"; do
     [ -d "/home/builder/repo/pkgbuilds/$p" ] ||
       { echo "!! PKGBUILD_ONLY names $p, which is not in pkgbuilds/" >&2; failed+=("$p"); }
   done
   for d in /home/builder/repo/pkgbuilds/*/; do
     p=$(basename "$d")
-    if [ -n "${PKGBUILD_ONLY:-}" ]; then
+    if (( ${#only[@]} )); then
       case " ${only[*]} " in *" $p "*) ;; *) continue ;; esac
     fi
     echo "==> $p (in-repo)"
