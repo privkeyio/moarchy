@@ -68,8 +68,14 @@ RUN printf '\n[danctnix]\nSigLevel = Never\nServer = https://archmobile.mirror.d
 #
 # which names the dependency honestly and still points at the wrong place: the
 # package declares it correctly, and the container is what has not got it.
+#
+# The last line is megapixels' makedepends, by the same rule. A full build only
+# got away without them because a manifest component built with `makepkg -s`
+# had already pulled gtk4 into the container; a PKGBUILD_ONLY build (CI) skips
+# the components and stopped at `Dependency "gtk4" not found`.
 RUN pacman-key --init && pacman-key --populate archlinuxarm && \
-    pacman -Syu --noconfirm git go base-devel sudo bc libelf meson ninja alsa-lib python
+    pacman -Syu --noconfirm git go base-devel sudo bc libelf meson ninja alsa-lib python \
+      pkgconf gtk4 libdng libmegapixels libepoxy zbar feedbackd libjpeg-turbo
 
 # makepkg refuses to run as root.
 RUN useradd -m builder && \

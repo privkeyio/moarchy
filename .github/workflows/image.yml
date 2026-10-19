@@ -66,16 +66,20 @@ jobs:
           cp .cache/kernel/*.pkg.tar.* packages/ 2>/dev/null || true
           # The container builds as its own builder user.
           chmod -R a+rwX packages
-          PKGBUILD_ONLY="$(ls pkgbuilds)" ./scripts/provision.sh build 2>&1 | tee -a "$LOG"
+          rc=0
+          PKGBUILD_ONLY="$(ls pkgbuilds)" ./scripts/provision.sh build 2>&1 | tee -a "$LOG" || rc=$?
           sudo chown -R "$(id -u):$(id -g)" packages
+          # Kept even when another package failed, so the next run does not
+          # rebuild a kernel that built fine.
           rm -f .cache/kernel/*
           awk '$2 ~ /^linux-moarchy-sdm670-/ { print "packages/" $2 }' packages/.build-manifest |
             xargs -r cp -t .cache/kernel/
+          exit $rc
 
       # Saved now, before anything runs privileged, so nothing an image build
       # executes can change what later runs restore.
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: steps.kernel.outputs.cache-hit != 'true'
+        if: always() && steps.kernel.outputs.cache-hit != 'true' && hashFiles('.cache/kernel/*') != ''
         with:
           path: .cache/kernel
           key: ${{ env.KERNEL_KEY }}
