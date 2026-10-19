@@ -217,10 +217,16 @@ if [ -d /repo/pkgbuilds ]; then
   cp -a /repo /home/builder/repo
   chown -R builder /home/builder/repo
 
+  # Read, not word-split, so a name is never a glob.
+  read -r -a only <<< "$(printf '%s' "${PKGBUILD_ONLY:-}" | tr '\n\t' '  ')"
+  for p in "${only[@]}"; do
+    [ -d "/home/builder/repo/pkgbuilds/$p" ] ||
+      { echo "!! PKGBUILD_ONLY names $p, which is not in pkgbuilds/" >&2; failed+=("$p"); }
+  done
   for d in /home/builder/repo/pkgbuilds/*/; do
     p=$(basename "$d")
-    if [ -n "${PKGBUILD_ONLY:-}" ] && ! printf '%s\n' ${PKGBUILD_ONLY} | grep -qx "$p"; then
-      continue
+    if [ -n "${PKGBUILD_ONLY:-}" ]; then
+      case " ${only[*]} " in *" $p "*) ;; *) continue ;; esac
     fi
     echo "==> $p (in-repo)"
     if already_built "$d"; then
