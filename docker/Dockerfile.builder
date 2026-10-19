@@ -75,7 +75,7 @@ RUN printf '\n[danctnix]\nSigLevel = Never\nServer = https://archmobile.mirror.d
 # the components and stopped at `Dependency "gtk4" not found`.
 RUN pacman-key --init && pacman-key --populate archlinuxarm && \
     pacman -Syu --noconfirm git go base-devel sudo bc libelf meson ninja alsa-lib python \
-      pkgconf gtk4 libdng libmegapixels libepoxy zbar feedbackd libjpeg-turbo
+      pkgconf gperf gtk4 libdng libmegapixels libepoxy zbar feedbackd libjpeg-turbo libpulse
 
 # makepkg refuses to run as root.
 RUN useradd -m builder && \
