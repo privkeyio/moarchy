@@ -249,8 +249,10 @@ threading.Event().wait()
   : >"$log"
   # curl's own exit code beside each, so a refused or timed-out connection (7,
   # 28) can be told from a URL that was never usable (3), which proves nothing.
+  # By keyword: iproute2 may put fields such as nhid before them.
   out=$(gssh "set -- \$(ip -6 route show default 2>/dev/null | head -1)
-    gw6=\${3:-} dev6=\${5:-}
+    gw6= dev6=
+    while [ \$# -gt 1 ]; do case \$1 in via) gw6=\$2 ;; dev) dev6=\$2 ;; esac; shift; done
     for a in 10.0.2.2 \${gw6:+[\$gw6%\$dev6]}; do
       curl -fsS -g --max-time 4 -o /dev/null http://\$a:$port/ 2>/dev/null; echo \"guest probe \$a: curl exit \$?\"
     done
