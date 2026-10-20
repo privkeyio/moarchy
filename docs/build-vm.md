@@ -15,6 +15,8 @@ scripts/vm/vm.sh fetch-base                          # once: the pinned Arch clo
 scripts/vm/vm.sh build HEAD ~/.ssh/id_ed25519.pub    # a fresh VM, the build, the images out
 ```
 
+On a 16-thread allowance, a build in a fresh VM took about 2 hours, most of it the kernel compiling under arm64 emulation; one reusing a VM's kernel cache (`VM_REUSE=1`, below) took about 45 minutes.
+
 `build` takes a commit of this repo from after the build VM existed, and builds it with that commit's own `scripts/vm/in-vm-build.sh`. Each build gets a VM of its own: a fresh disk and a new host key, first boot, `check-isolation`, the build, the images copied out, power off. Nothing one build does can reach the next, its kernel cache included.
 
 Give it a public key and the dev image is keyed to it (`docs/structure.md` I5) and copied out with the release image; without one, the dev image is built and checked with a throwaway key, as CI does, and stays in the VM. The build is followed as it runs, and fails on anything CI's image steps would fail on, with one exception: verify.sh's online-resize check needs a native arm64 kernel, so under the VM's emulation that one FAIL is allowed, and CI checks it.
