@@ -57,6 +57,10 @@ CACHE=$HOME/kernel-cache/$KEY
 # cannot remove.
 sudo rm -rf packages images ~/dev-images ~/out
 git clean -q -fdx
+# And the commit's own files back: packages/.gitkeep went with the rest, and
+# build-image.sh refuses a tree that does not match its commit.
+git reset -q --hard FETCH_HEAD
+[ -z "$(git status --porcelain)" ] || { git status --short; echo "!! the tree does not match the commit"; exit 1; }
 mkdir -p packages
 if cp "$CACHE"/*.pkg.tar.* packages/ 2>/dev/null; then echo "    the kernel from the cache ($KEY)"; fi
 chmod -R a+rwX packages
