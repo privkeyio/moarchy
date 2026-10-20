@@ -114,6 +114,7 @@ alongside the change that made them untrue.
 | [`upstream.md`](upstream.md) | Decisions — the boundary with Omarchy, and what a version bump may break |
 | [`refactor.md`](refactor.md) | Contract — what has to be true when the duplication is gone. Cited by ~29 comments |
 | [`build-log.md`](build-log.md) | How this went, including the dead ends. The archaeology lives here |
+| [`build-vm.md`](build-vm.md) | How-to — building and checking images in a throwaway VM instead of on your machine |
 
 ---
 
@@ -282,6 +283,7 @@ upgrade rather than doing it, for exactly that reason.
 | `bin/moarchy-selftest` | on the phone. `--gestures`, `--settings`, `--surfaces`, `--windows` are opt-in suites, and they cite the criterion ids in these documents |
 | `scripts/provision.sh` | the dev loop, one step per verb: `steps` lists them, no argument runs prereqs → image → build → flash, then `deploy`, `install`, `watch`, `verify` once the phone is up |
 | `scripts/build-image.sh`, `scripts/verify-image.sh` | the flashable image, and the checks against it |
+| `scripts/vm/vm.sh` | the same build and every check CI runs on it, in a throwaway VM ([`build-vm.md`](build-vm.md)) |
 
 A criterion with no runnable check is visible on purpose:
 [`gestures.md`](gestures.md)'s `## Coverage` lists which ones a suite actually

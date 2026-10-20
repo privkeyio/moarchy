@@ -69,8 +69,9 @@ fetch_base() {
   [ -f "$D/base/$f" ] && { echo "already fetched: $D/base/$f"; return; }
   mkdir -p "$D/base"
   tmp=$(mktemp -d "$D/base/.fetch.XXXXXX")
-  trap 'rm -rf "$tmp"' EXIT
-  curl -fL --proto '=https' -o "$tmp/$f" "$url/$f"
+  # The value now: $tmp is local, and gone by the time the script exits.
+  trap "rm -rf '$tmp'" EXIT
+  curl -fL --progress-bar --proto '=https' -o "$tmp/$f" "$url/$f"
   curl -fsSL --proto '=https' -o "$tmp/$f.sig" "$url/$f.sig"
   echo "$sha  $tmp/$f" | sha256sum -c --quiet - || die "$f does not match the pinned sha256"
   # The key from the repo, in a keyring of its own, and the signature must be
@@ -162,7 +163,7 @@ class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
 http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
 ' "$port" "$token" & pid=$!
-  trap 'kill "$pid" 2>/dev/null' EXIT
+  trap "kill $pid 2>/dev/null" EXIT
   sleep 1
   curl -fsS "http://127.0.0.1:$port/" | grep -q "$token" || die "the test listener did not come up"
   out=$(gssh "for a in 10.0.2.2 10.0.2.15 127.0.0.1; do
@@ -185,7 +186,7 @@ build() {
   bundle=$(mktemp "$D/run/bundle.XXXXXX")
   # One ref, in a namespace of its own so no branch of yours is touched, and
   # gone again as soon as the bundle is written.
-  trap 'rm -f "$bundle"; git -C "$REPO" update-ref -d refs/moarchy-vm/build 2>/dev/null' EXIT
+  trap "rm -f '$bundle'; git -C '$REPO' update-ref -d refs/moarchy-vm/build 2>/dev/null" EXIT
   git -C "$REPO" update-ref refs/moarchy-vm/build "$sha"
   git -C "$REPO" bundle create -q "$bundle" refs/moarchy-vm/build
   git -C "$REPO" update-ref -d refs/moarchy-vm/build
