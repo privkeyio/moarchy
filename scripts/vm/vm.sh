@@ -66,16 +66,31 @@ ssh_opts=(-F /dev/null -o BatchMode=yes
           -o HostKeyAlgorithms=ssh-ed25519
           -o IdentitiesOnly=yes -o IdentityFile="$D/keys/client_ed25519"
           -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=5 -p "$PORT")
-gssh() { ssh "${ssh_opts[@]}" builder@127.0.0.1 "$@"; }
+# The guest's stderr cleaned too: a guest-written ~/.bashrc, or a replaced
+# tail, can print to either.
+gssh() { ssh "${ssh_opts[@]}" builder@127.0.0.1 "$@" 2> >(clean >&2); }
 
-running() { [ -f "$D/run/qemu.pid" ] && kill -0 "$(cat "$D/run/qemu.pid")" 2>/dev/null; }
-kill_passt() { [ -f "$D/run/passt.pid" ] && kill "$(cat "$D/run/passt.pid")" 2>/dev/null; rm -f "$D/run/passt.pid" "$SOCK"; }
+# The pid a pidfile names, only while it is still that program: pidfiles here
+# outlive a host reboot or a killed QEMU, and the number may since have gone to
+# some other process of yours.
+pid_of() {
+  local pid; pid=$(cat "$1" 2>/dev/null) || return 1
+  [[ $pid =~ ^[0-9]+$ ]] && [[ $(cat "/proc/$pid/comm" 2>/dev/null) == "$2"* ]] && echo "$pid"
+}
+running() { pid_of "$D/run/qemu.pid" qemu-system >/dev/null; }
+kill_passt() {
+  local pid; pid=$(pid_of "$D/run/passt.pid" passt) && kill "$pid" 2>/dev/null
+  rm -f "$D/run/passt.pid" "$SOCK"
+}
 
 # One EXIT trap for everything a run sets up, each step adding its own cleanup.
 # The values are captured as they are added: the variables are local, and gone
 # by the time the script exits.
-CLEANUP=:
+# set +e first: a step that fails must not skip the ones after it.
+CLEANUP='set +e'
 on_exit() { CLEANUP="$CLEANUP; $1"; trap "$CLEANUP" EXIT; }
+# A value as it is now, quoted for the trap, whatever characters it holds.
+q() { printf '%q' "$1"; }
 # bash runs no EXIT trap when a signal ends it, which left a VM, its passt and
 # the isolation listener running after a Ctrl-C. Ended by one, it exits, and
 # cleans up. Ctrl-C during a build therefore stops the VM too.
@@ -86,7 +101,7 @@ trap 'exit 143' TERM HUP
 # build log carries upstream builds' output, and an escape sequence in it
 # should not reach your terminal (titles, clipboard, hyperlinks).
 # Bytes, not characters: in a UTF-8 locale sed rejects the byte range below.
-clean() { LC_ALL=C sed -u 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/\x1b[]P^_][^\x07\x1b]*\(\x07\|\x1b\\\)//g; s/[\x00-\x08\x0b-\x1f\x7f]//g'; }
+clean() { LC_ALL=C sed -u 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/\x1b[]P^_][^\x07\x1b]*\(\x07\|\x1b\\\)//g; s/[\x00-\x08\x0b-\x1f\x7f]//g; s/\xc2[\x80-\x9f]//g'; }
 
 fetch_base() {
   local version sha key url f tmp g st
@@ -98,7 +113,7 @@ fetch_base() {
   [ -f "$D/base/$f" ] && { echo "already fetched: $D/base/$f"; return; }
   mkdir -p "$D/base"
   tmp=$(mktemp -d "$D/base/.fetch.XXXXXX")
-  on_exit "rm -rf '$tmp'"
+  on_exit "rm -rf $(q "$tmp")"
   curl -fL --progress-bar --proto '=https' --max-filesize 4G --max-time 3600 -o "$tmp/$f" "$url/$f"
   curl -fsSL --proto '=https' --max-filesize 64K --max-time 60 -o "$tmp/$f.sig" "$url/$f.sig"
   echo "$sha  $tmp/$f" | sha256sum -c --quiet - || die "$f does not match the pinned sha256"
@@ -215,8 +230,11 @@ check_isolation() {
 import http.server, socket, sys, threading
 port, token, log = int(sys.argv[1]), sys.argv[2].encode(), sys.argv[3]
 class H(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
+    # Any connection at all, logged before a byte of it is read.
+    def setup(self):
         with open(log, "a") as f: f.write(f"{self.client_address[0]}\n")
+        super().setup()
+    def do_GET(self):
         self.send_response(200); self.end_headers(); self.wfile.write(token)
     def log_message(self, *a): pass
 class S6(http.server.HTTPServer): address_family = socket.AF_INET6
@@ -224,20 +242,28 @@ servers = [http.server.HTTPServer(("127.0.0.1", port), H), S6(("::1", port), H)]
 for s in servers: threading.Thread(target=s.serve_forever, daemon=True).start()
 threading.Event().wait()
 ' "$port" "$token" "$log" & pid=$!
-  on_exit "kill $pid 2>/dev/null; rm -f '$log'"
+  on_exit "kill $pid 2>/dev/null; rm -f $(q "$log")"
   sleep 1
   curl -fsS "http://127.0.0.1:$port/" | grep -q "$token" && curl -fsS -g "http://[::1]:$port/" | grep -q "$token" ||
     die "the test listeners did not come up"
   : >"$log"
-  out=$(gssh "gw6=\$(ip -6 route show default 2>/dev/null | awk '{print \$3; exit}')
-    for a in 10.0.2.2 \${gw6:+[\$gw6%eth0]}; do
-      curl -fsS -g --max-time 4 http://\$a:$port/ >/dev/null 2>&1 && echo \"guest says it reached \$a\" || echo \"guest could not reach \$a\"
+  # curl's own exit code beside each, so a refused or timed-out connection (7,
+  # 28) can be told from a URL that was never usable (3), which proves nothing.
+  out=$(gssh "set -- \$(ip -6 route show default 2>/dev/null | head -1)
+    gw6=\${3:-} dev6=\${5:-}
+    for a in 10.0.2.2 \${gw6:+[\$gw6%\$dev6]}; do
+      curl -fsS -g --max-time 4 -o /dev/null http://\$a:$port/ 2>/dev/null; echo \"guest probe \$a: curl exit \$?\"
     done
     curl -fsS --max-time 15 -o /dev/null -w 'outbound https %{http_code}\n' https://archlinux.org/" | clean || true)
   echo "$out"
   [ -s "$log" ] && die "the host's loopback listener was reached from the guest ($(tr '\n' ' ' <"$log"))"
   grep -q 'outbound https 200' <<<"$out" || die "the guest has no working network; the check above proves nothing"
-  echo "isolated: the host's loopback, IPv4 and IPv6, saw nothing from the guest"
+  grep -E '^guest probe .*: curl exit (3|6)$' <<<"$out" && die "a probe's URL was unusable; the check above proves nothing"
+  if grep -q '^guest probe \[' <<<"$out"; then
+    echo "isolated: the host's loopback, IPv4 and IPv6, saw nothing from the guest"
+  else
+    echo "isolated: the host's loopback saw nothing from the guest (it has no IPv6 route to probe)"
+  fi
 }
 
 # Copy one expected file out, by name, as bytes: whatever the guest put at that
@@ -268,15 +294,20 @@ build() {
   # not its kernel cache, not a compromised guest, not a guest reporting the
   # next build's result. VM_REUSE=1 builds in the running VM instead, for when
   # every ref built in it since its last setup is one you trust.
+  # One build at a time here: a second one would power off and delete the
+  # first one's VM.
+  mkdir -p "$D/run"
+  exec 8>"$D/run/build.lock"
+  flock -n 8 || die "another vm.sh build is using $D"
   if [ "${VM_REUSE:-0}" = 1 ]; then
     running || die "VM_REUSE=1, but the VM is not running"
     gssh '[ -f ~/build.pid ] && kill -0 "$(cat ~/build.pid)" 2>/dev/null' &&
       die "a build is still running in the VM; wait for it, or stop the VM"
   else
-    stop
+    running && die "a VM is running; stop it first, or build in it with VM_REUSE=1"
     setup
     start
-    on_exit "'$0' stop >/dev/null 2>&1"
+    on_exit "$(q "$0") stop >/dev/null 2>&1"
     wait_ready
     check_isolation
   fi
@@ -284,11 +315,13 @@ build() {
   # One ref, in a namespace of its own so no branch of yours is touched, and
   # gone again as soon as the bundle is written. A bundle carries the history
   # behind it too, unpushed commits included.
-  on_exit "rm -f '$bundle'; git -C '$REPO' update-ref -d refs/moarchy-vm/build 2>/dev/null"
+  on_exit "rm -f $(q "$bundle"); git -C $(q "$REPO") update-ref -d refs/moarchy-vm/build 2>/dev/null"
   git -C "$REPO" update-ref refs/moarchy-vm/build "$sha"
   git -C "$REPO" bundle create -q "$bundle" refs/moarchy-vm/build
   git -C "$REPO" update-ref -d refs/moarchy-vm/build
-  gssh 'rm -rf ~/in && mkdir -p ~/in'
+  # The last build's log, result and images gone too, or a ref that never got
+  # as far as starting its log would be judged on the previous one's.
+  gssh 'rm -rf ~/in ~/out ~/build.log ~/build.pid && mkdir -p ~/in'
   gssh 'cat > ~/in/moarchy.bundle' <"$bundle"
   # The ref's own build script, not this checkout's: a ref is built the way it
   # says it is built.
@@ -300,10 +333,20 @@ build() {
   # log is followed until the build has exited, and followed again if the
   # connection drops first: the verdict is only read once there is one.
   gssh 'setsid nohup ~/in-vm-build.sh refs/moarchy-vm/build >/dev/null 2>&1 </dev/null & echo $! > ~/build.pid'
-  local from=1
-  until gssh '! kill -0 "$(cat ~/build.pid)" 2>/dev/null'; do
-    gssh "sleep 2; tail -n +$from --pid=\"\$(cat ~/build.pid)\" -f ~/build.log" | clean || true
-    from=$(( $(gssh 'wc -l < ~/build.log') + 1 ))
+  # Nothing the guest prints here is evaluated: the line count is taken only
+  # if it is a number, and a failed connection is a retry, not an exit.
+  local from=1 state n
+  while :; do
+    state=$(gssh 'kill -0 "$(cat ~/build.pid)" 2>/dev/null && echo running || echo done' || true)
+    [ "$state" = done ] && break
+    if [ "$state" = running ]; then
+      gssh "sleep 2; tail -n +$from --pid=\"\$(cat ~/build.pid)\" -f ~/build.log" | clean || true
+    else
+      running || die "the VM stopped during the build; see $D/run/console.log"
+      sleep 5
+    fi
+    n=$(gssh 'wc -l < ~/build.log' || true)
+    [[ $n =~ ^[0-9]+$ ]] && from=$(( n + 1 ))
   done
   gssh "tail -n +$from ~/build.log" | clean || true
   gssh 'tail -n 1 ~/build.log' | grep -q 'BUILD OK' || die "the build failed; the log is above, and in the guest at ~/build.log"
@@ -324,8 +367,8 @@ build() {
 }
 
 stop() {
-  if running; then
-    local pid; pid=$(cat "$D/run/qemu.pid")
+  local pid
+  if pid=$(pid_of "$D/run/qemu.pid" qemu-system); then
     # The connection drops as the guest shuts down, so ssh's exit status says
     # nothing; only a guest still running after the wait is killed.
     gssh 'sync; sudo systemctl poweroff' 2>/dev/null || true

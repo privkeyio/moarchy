@@ -23,7 +23,7 @@ Give it a public key and the dev image is keyed to it (`docs/structure.md` I5) a
 
 The images land in `~/.local/share/moarchy-build-vm/out/<commit>-<time>.<id>/{release,dev}`. Flash one with `scripts/vm/flash-sargo.sh <directory>`, the script from this repo, never the `flash.sh` a build writes into its own output: anything that comes out of the VM is data to check, not a program to run. Only the four expected files come out, each copied by name as plain bytes with a size cap, and `SHA256SUMS` must name exactly the three images. The checksums prove the files arrived as the VM wrote them, and nothing more.
 
-The steps also run one at a time, to look around in a VM: `setup`, `start`, `wait`, `check-isolation`, `ssh`, `stop`, `destroy`. `VM_REUSE=1 vm.sh build ...` builds in the VM that is already running, with its kernel cache, which is faster and trusts every ref built in that VM since its last `setup`.
+One build runs at a time per state directory, and `build` will not touch a VM that is already running. The steps also run one at a time, to look around in a VM: `setup`, `start`, `wait`, `check-isolation`, `ssh`, `stop`, `destroy`. `VM_REUSE=1 vm.sh build ...` builds in the VM that is already running, with its kernel cache, which is faster and trusts every ref built in that VM since its last `setup`.
 
 Everything the VM keeps (its base image, keys, disk and output) is under `$MOARCHY_VM_DIR`, by default `~/.local/share/moarchy-build-vm`, mode 0700, and never in the repo. `VM_CPUS`, `VM_MEM`, `VM_DISK`, `VM_PORT` and `VM_DNS` override the defaults at the top of `vm.sh`. By default the VM gets at most 16 CPUs and QEMU runs at nice 10, so a build leaves the rest of the machine usable.
 
