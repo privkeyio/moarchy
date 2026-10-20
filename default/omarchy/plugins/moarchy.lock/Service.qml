@@ -88,7 +88,13 @@ Item {
   property bool strandedLock: false
   property bool strandedLockResolved: false
 
-  readonly property bool locked: lockRequested || sessionLock.locked || sessionLock.secure
+  // What this shell last set WlSessionLock.locked to, or the compositor told
+  // it. Not sessionLock.locked itself: setting it to false clears `secure`
+  // first and announces nothing after, so a binding on it kept `locked` true
+  // over an unlocked session (measured on the phone): no lock would be taken
+  // again, and the lock screen's idle blank ran under the desktop.
+  property bool lockHeld: false
+  readonly property bool locked: lockRequested || lockHeld || sessionLock.secure
   readonly property bool busy: authenticating || settingPin
   readonly property string mode: {
     if (!root.locked) return "unlocked"
@@ -121,7 +127,7 @@ Item {
   }
 
   function requestSessionLock() {
-    if (!lockRequested || sessionLock.locked || sessionLock.secure) return
+    if (!lockRequested || lockHeld || sessionLock.secure) return
     if (sessionLockStabilizeTimer.running) return
 
     if (!hasRealScreen()) {
@@ -133,6 +139,7 @@ Item {
 
     pendingSessionLock = false
     pendingSessionLockTimer.stop()
+    lockHeld = true
     sessionLock.locked = true
   }
 
@@ -254,6 +261,7 @@ Item {
     sessionLockStabilizeTimer.stop()
     pendingSessionLockTimer.stop()
     resetAuthenticationState()
+    lockHeld = false
     sessionLock.locked = false
     writeState("unlocked")
     releaseKeyboard()
@@ -360,6 +368,7 @@ Item {
 
     onLockStateChanged: {
       root.logEvent("session-locked=" + locked)
+      root.lockHeld = locked
 
       if (locked) {
         root.pendingSessionLock = false
