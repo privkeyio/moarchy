@@ -3,7 +3,7 @@
 #
 # The new PIN is read twice without echo and handed to the root helper on its
 # stdin, never as an argument. sudo asks for the current PIN itself, on the
-# terminal, once passwordless sudo is gone; until then it asks nothing.
+# terminal; on a dev image, whose sudo is passwordless, it asks nothing.
 set -uo pipefail
 
 HELPER=/usr/lib/moarchy/bin/moarchy-pin

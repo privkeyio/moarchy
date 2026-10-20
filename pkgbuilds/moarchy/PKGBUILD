@@ -202,7 +202,14 @@ pkgver=$_ver
 #     check a password uncounted), and the power button, the idle timeout and Settings > Power > Lock
 #     taking a real lock (docs/structure.md I8, docs/gestures.md Q11). A phone
 #     holding 0.5.0-10 blanks its panel and never locks.
-pkgrel=11
+# 12: sudo asks for the PIN. 00-moarchy-wheel is the wheel group's sudo, which
+#     Arch's /etc/sudoers leaves commented out, and 30-moarchy-grants lets the
+#     mobile data tile and the SIM keypad do their one root action each with no
+#     PIN, since neither has a terminal to ask in. The app drawer's uninstall
+#     asks through polkit instead. 49-moarchy-store.rules is gone: it named an
+#     action id the store does not have, so it never matched, and the store
+#     asks for the PIN as its own policy says (docs/structure.md I8).
+pkgrel=12
 pkgdesc="Omarchy's look, keybindings and theming on a phone, under Hyprland"
 arch=('any')
 url='https://github.com/SimonSchubert/moarchy'
@@ -262,7 +269,10 @@ checkdepends=('sudo')
 # A sudoers file sudo cannot parse is not a broken rule, it is a broken sudo:
 # sudo refuses to run at all while any file it includes fails to parse.
 check() {
-  visudo -cf "$_repo/default/sudoers/20-moarchy-pin"
+  local f
+  for f in 00-moarchy-wheel 20-moarchy-pin 30-moarchy-grants; do
+    visudo -cf "$_repo/default/sudoers/$f" || return 1
+  done
 }
 
 package() {
@@ -291,7 +301,6 @@ package() {
          "$pkgdir/usr/share/moarchy/default/omarchy" \
          "$pkgdir/usr/share/moarchy/default/themed" \
          "$pkgdir/usr/share/moarchy/default/pacman-hooks" \
-         "$pkgdir/usr/share/moarchy/default/polkit" \
          "$pkgdir/usr/share/moarchy/default/sudoers" \
          "$pkgdir/usr/share/moarchy/default/tmpfiles" \
          "$pkgdir/usr/share/moarchy/default/udev" \
@@ -472,14 +481,6 @@ package() {
   install -Dm644 "$_repo/default/pacman-hooks/90-moarchy-hyprland-reload-resume.hook" \
     "$pkgdir/usr/share/libalpm/hooks/90-moarchy-hyprland-reload-resume.hook"
 
-  # The image locks the account password, so the store's pkexec action could
-  # never be authenticated and the store could install nothing. /usr/share, not
-  # /etc: this is a package's rule and /etc/polkit-1/rules.d stays free for the
-  # user to override it. Harmless if moarchy-store is not installed -- polkit
-  # matches on the action id, which then simply never appears.
-  install -Dm644 "$_repo/default/polkit/49-moarchy-store.rules" \
-    "$pkgdir/usr/share/polkit-1/rules.d/49-moarchy-store.rules"
-
   # The lock screen's two sudo rules: checking a PIN, and setting the FIRST
   # one, which has no PIN to authenticate with yet. Exactly one command and one
   # argument each; bin/moarchy-pin counts every check and refuses `first` once
@@ -488,6 +489,12 @@ package() {
   # typo here from breaking sudo for the whole phone.
   install -dm750 "$pkgdir/etc/sudoers.d"
   install -m440 "$_repo/default/sudoers/20-moarchy-pin" "$pkgdir/etc/sudoers.d/20-moarchy-pin"
+  # sudo itself, for the wheel group, with the PIN; and the two root actions a
+  # tile and a keypad take with no PIN, one fixed command line each. A dev
+  # image adds passwordless sudo on top (image/configure.sh), a release does
+  # not, and image/verify.sh holds every one of these files to its rules.
+  install -m440 "$_repo/default/sudoers/00-moarchy-wheel" "$pkgdir/etc/sudoers.d/00-moarchy-wheel"
+  install -m440 "$_repo/default/sudoers/30-moarchy-grants" "$pkgdir/etc/sudoers.d/30-moarchy-grants"
 
   # One door to the PIN, put back after any upgrade that would undo it, and
   # taken out again before this package is, so system-auth never names a
@@ -510,9 +517,8 @@ package() {
 
   # The torch tile's permission. 73 so it runs after feedbackd's 72, which
   # tries to do this and cannot on Arch -- the rule's own header has the whole
-  # story, and docs/control-center.md S10a is the criterion. /usr/lib, not /etc, for the
-  # same reason as the polkit rule above: this is the package's, and the
-  # override path stays free.
+  # story, and docs/control-center.md S10a is the criterion. /usr/lib, not /etc:
+  # this is the package's rule, and the override path stays free.
   install -Dm644 "$_repo/default/udev/73-moarchy-torch.rules" \
     "$pkgdir/usr/lib/udev/rules.d/73-moarchy-torch.rules"
 

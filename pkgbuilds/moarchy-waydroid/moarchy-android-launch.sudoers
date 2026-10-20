@@ -1,0 +1,4 @@
+# Starting an Android app is one root attach to the container, and the app
+# drawer has no terminal to ask for the PIN in. The argument is held to an
+# Android package name, which moarchy-android-launch checks again.
+%wheel ALL=(root) NOPASSWD: /usr/lib/moarchy/bin/moarchy-android-launch ^--start [A-Za-z0-9_][A-Za-z0-9_.]*$

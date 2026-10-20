@@ -330,19 +330,22 @@ cmd_remove() {
         notify_no "$PLAN_BLOCKED"
         fail "$PLAN_BLOCKED"
       fi
-      # -n, and it is the difference between a failure and a hang. The caller
-      # is a QML Process with no terminal on its stdin: a sudo that decides it
-      # wants a password would sit there forever, and the card would sit at
-      # "Removing" behind it with nothing to say. This image has passwordless
-      # sudo on purpose, so -n costs nothing when it holds and turns the case
-      # where it does not into one line in a notification.
-      if (( PLAN_SET )); then
-        out="$(sudo -n pacman -Rns --noconfirm \
-                       --assume-installed "$PACKAGE" "$PACKAGE" 2>&1)"
+      # The PIN, asked by polkit's dialog: removing a package can remove any
+      # package, so it is not one of the things that run as root unasked
+      # (docs/structure.md I8). The caller is a QML Process with no terminal,
+      # which sudo could not ask in. A dev image's passwordless sudo is used
+      # when it is there, so a phone on the bench is not stopped for a PIN.
+      local -a argv=(/usr/bin/pacman -Rns --noconfirm)
+      (( PLAN_SET )) && argv+=(--assume-installed "$PACKAGE")
+      argv+=(-- "$PACKAGE")
+      if sudo -n true 2>/dev/null; then
+        out="$(sudo -n "${argv[@]}" 2>&1)"
       else
-        out="$(sudo -n pacman -Rns --noconfirm "$PACKAGE" 2>&1)"
+        out="$(pkexec "${argv[@]}" 2>&1)"
       fi
       rc=$?
+      # pkexec's own word for a dismissed dialog or a refused PIN.
+      (( rc == 126 || rc == 127 )) && out="Not removed: the PIN was not given"
       ;;
     webapp)
       # Upstream's, because it takes the icon as well as the entry, and it

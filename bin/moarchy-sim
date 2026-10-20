@@ -20,12 +20,23 @@ set -uo pipefail
 
 MMCLI=/usr/bin/mmcli
 
-# sudo, and passwordless by design on this phone (docs/structure.md; the
-# drop-in is deliberate). ModemManager's Device.Control action is what
+# Root, for the unlock only. ModemManager's Device.Control action is what
 # --pin goes through, and from the shell's session a polkit prompt would land
-# on top of the very keypad that asked for it -- a dialog about the dialog.
-# Reads need no privilege and do not get sudo.
-_mm_root() { sudo -n "$MMCLI" "$@" 2>&1; }
+# on top of the very keypad that asked for it -- a dialog about the dialog. So
+# `unlock` runs this script as root through the one sudoers rule that names it
+# (/etc/sudoers.d/30-moarchy-grants, docs/structure.md I8), with the PIN on
+# stdin: sudo logs the command it runs, and a PIN in it would be in the
+# journal. Reads need no privilege and do not get sudo.
+_mm_root() { "$MMCLI" "$@" 2>&1; }
+
+# Whether sudo will run the unlock without asking. Without this, a missing
+# rule is sudo exiting 1, which is what a wrong PIN exits, and the keypad
+# would say a PIN was wrong that never reached the SIM. -l asks nothing and
+# runs nothing; the long listing names the matched rule's tags, and only a
+# rule that skips the password says !authenticate.
+_granted() {
+  sudo -n -l -l /usr/lib/moarchy/bin/moarchy-sim unlock 2>/dev/null | grep -q '!authenticate'
+}
 
 # The SIM's object path, which is NOT the modem's.
 #
@@ -198,7 +209,21 @@ unlock() {
 
 case "${1:-}" in
   status) status ;;
-  unlock) [ $# -ge 2 ] || { usage >&2; exit 64; }; unlock "$2" ;;
+  unlock)
+    if [ $# -ge 2 ]; then
+      if (( EUID == 0 )); then unlock "$2"; exit; fi
+      _granted || {
+        echo "This phone has no rule that lets the keypad unlock a SIM." >&2
+        exit 3
+      }
+      printf '%s\n' "$2" | sudo -n /usr/lib/moarchy/bin/moarchy-sim unlock
+      exit
+    fi
+    # As root through the rule: the PIN is the first line of stdin.
+    (( EUID == 0 )) || { usage >&2; exit 64; }
+    IFS= read -r pin || true
+    unlock "${pin:-}"
+    ;;
   -h|--help|help) usage ;;
   *) usage >&2; exit 64 ;;
 esac

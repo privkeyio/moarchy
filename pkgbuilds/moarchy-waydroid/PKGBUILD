@@ -44,7 +44,11 @@ pkgver=$_ver
 # 1 for 0.5.0: pkgver moved, and 0.5.0-1 is newer than the 0.4.0-1 [moarchy]
 # serves, so a phone holding it stops being handed immersive.full=* -- which is
 # what was destroying the insets every Android app pads its content against.
-pkgrel=1
+#
+# 2: release images ask for the PIN for sudo, and an app drawer tap has no
+# terminal to ask in, so the launcher's root attach is its own `--start <pkg>`
+# verb with a sudoers rule naming exactly that (moarchy-android-launch.sudoers).
+pkgrel=2
 pkgdesc="Android apps on moarchy: Waydroid configured for a phone screen"
 arch=('any')
 url='https://github.com/SimonSchubert/moarchy'
@@ -65,8 +69,15 @@ depends=('waydroid' 'python' 'sway' 'glib2' 'libdrm')
 install=moarchy-waydroid.install
 
 source=('moarchy-waydroid-setup'
-        'moarchy-android-launch')
-sha256sums=('SKIP' 'SKIP')
+        'moarchy-android-launch'
+        'moarchy-android-launch.sudoers')
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+checkdepends=('sudo')
+
+# A sudoers file sudo cannot parse breaks sudo for the whole phone.
+check() {
+  visudo -cf "$srcdir/moarchy-android-launch.sudoers"
+}
 
 package() {
   # /usr/lib/moarchy/bin is the project's own bin dir and is NOT on PATH,
@@ -76,4 +87,8 @@ package() {
     "$pkgdir/usr/lib/moarchy/bin/moarchy-waydroid-setup"
   install -Dm755 "$srcdir/moarchy-android-launch" \
     "$pkgdir/usr/lib/moarchy/bin/moarchy-android-launch"
+  # 0750, as the sudo package makes it, so pacman has no conflict to report.
+  install -dm750 "$pkgdir/etc/sudoers.d"
+  install -m440 "$srcdir/moarchy-android-launch.sudoers" \
+    "$pkgdir/etc/sudoers.d/moarchy-android-launch"
 }

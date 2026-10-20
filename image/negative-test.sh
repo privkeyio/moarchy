@@ -142,6 +142,18 @@ sed -i 's|pam_exec.so .*moarchy-pin pam$|pam_unix.so          try_first_pass nul
 rm -f "$W/r/usr/lib/systemd/system/polkit-agent-helper@.service.d/50-moarchy-pin.conf"
 # 16. a second sudoers file granting `moarchy-pin set` with no password
 printf '%%wheel ALL=(root) NOPASSWD: /usr/lib/moarchy/bin/moarchy-pin set\n' > $W/r/etc/sudoers.d/99-planted
+# 19. a dev image's passwordless sudo, in a release image
+printf 'moarchy ALL=(ALL) NOPASSWD: ALL\n' > $W/r/etc/sudoers.d/10-moarchy
+chmod 440 $W/r/etc/sudoers.d/10-moarchy
+# 20. the tile and keypad grants widened by one more command. Appended to the
+#     rule line, for the same reason as 13.
+sed -i '/NOPASSWD/s|$|, /usr/bin/nmcli|' $W/r/etc/sudoers.d/30-moarchy-grants
+# 21. passwordless sudo in the package's own /etc/sudoers
+printf '%%wheel ALL=(ALL:ALL) NOPASSWD: ALL\n' >> $W/r/etc/sudoers
+# 22. a polkit rule that installs store apps with no PIN
+mkdir -p $W/r/etc/polkit-1/rules.d
+printf 'polkit.addRule(function (a, s) { if (a.id == "org.moarchy.store.manage") return polkit.Result.YES; });\n' \
+  > $W/r/etc/polkit-1/rules.d/49-planted.rules
 umount $W/r
 
 echo "==> re-sparsing"
@@ -190,6 +202,12 @@ catches "every polkit prompt fails"     "polkit's agent helper unable to write t
 catches "two lockers"                   "upstream's omarchy-lock-password planted"
 catches "other sudoers files name moarchy-pin: /etc/sudoers.d/99-planted" \
                                         "a second sudoers file granting moarchy-pin set"
+catches "sudoers files this image does not ship:.*/etc/sudoers.d/10-moarchy" \
+                                        "a dev image's passwordless sudo in a release image"
+catches "sudoers 30-moarchy-grants is not exactly its rules" "a widened tile and keypad grant"
+catches "/etc/sudoers has a rule that skips the PIN" "passwordless sudo in /etc/sudoers"
+catches "polkit rules grant the store without the PIN: /etc/polkit-1/rules.d/49-planted.rules" \
+                                        "a polkit rule granting the store with no PIN"
 
 echo
 if [ $rc -ne 0 ]; then ok "verify.sh exited non-zero ($rc)"; else no "verify.sh exited 0 on a broken image"; fi

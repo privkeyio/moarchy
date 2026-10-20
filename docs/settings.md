@@ -1158,7 +1158,7 @@ what is stored -- which is the reason `shell.plugins` shows an id too (M1).
 **R2** The new PIN is read twice without echo and refused unless both readings match and are 6 to 12 digits. Nothing is changed on a refusal.
 → in the terminal: `12345` is refused, and `123456` then `654321` is refused as a mismatch
 
-**R3** The PIN reaches the root helper on stdin, never in argv or the environment, and the helper sets it with `chpasswd`. `sudo /usr/lib/moarchy/bin/moarchy-pin set` is ordinary sudo: it asks for the current PIN once passwordless sudo is gone, and has no sudoers rule of its own.
+**R3** The PIN reaches the root helper on stdin, never in argv or the environment, and the helper sets it with `chpasswd`. `sudo /usr/lib/moarchy/bin/moarchy-pin set` is ordinary sudo: it asks for the current PIN (a dev image's passwordless sudo asks nothing), and has no sudoers rule of its own.
 → `grep -l moarchy-pin /etc/sudoers.d/*` lists only `20-moarchy-pin`, and its one rule names `first`
 
 ---

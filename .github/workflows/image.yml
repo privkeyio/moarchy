@@ -119,6 +119,15 @@ jobs:
           docker run --rm --platform linux/arm64 -v "$PWD:/repo:ro" --entrypoint bash moarchy-image \
             /repo/scripts/test-pam-door.sh 2>&1 | tee -a "$LOG"
 
+      # The sudo rules a release image ships, through real sudo: the few that
+      # skip the PIN, each for its own command line alone, and the helpers
+      # behind them. In a throwaway container, because it stubs system tools.
+      - name: Sudo grants
+        run: |
+          set -o pipefail
+          docker run --rm --platform linux/arm64 -v "$PWD:/repo:ro" --entrypoint bash moarchy-image \
+            /repo/scripts/test-sudo-grants.sh 2>&1 | tee -a "$LOG"
+
       - name: Negative test
         run: |
           set -o pipefail

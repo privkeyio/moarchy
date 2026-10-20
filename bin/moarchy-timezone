@@ -7,12 +7,17 @@
 # this only has to do the write.
 #
 # The clock refresh is upstream's, kept: the bar reads the zone once.
+#
+# -n, because Settings runs this with no terminal: upstream's own sudoers rule
+# (/etc/sudoers.d/omarchy-tzupdate) lets exactly `timedatectl set-timezone
+# <zone>` run without the PIN, and anything it does not match fails at once
+# instead of waiting on a prompt nobody can see.
 set -euo pipefail
 
 case "${1:-}" in
   set)
     [[ -n ${2:-} ]] || { echo "usage: moarchy-timezone set <Area/City>" >&2; exit 1; }
-    sudo timedatectl set-timezone "$2"
+    sudo -n timedatectl set-timezone "$2"
     omarchy-shell -q omarchy.clock refresh
     ;;
   current)

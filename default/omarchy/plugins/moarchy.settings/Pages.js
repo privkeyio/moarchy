@@ -840,20 +840,20 @@ var PAGES = {
     detailCmd: "echo \"$(grep -c '^[a-z]' $HOME/.ssh/authorized_keys 2>/dev/null || echo 0) authorized\"",
     run: "omarchy-launch-floating-terminal-with-presentation omarchy-setup-security-sshd",
     launch: "none" },
-  // The image already grants this permanently in /etc/sudoers.d/10-moarchy, so
-  // upstream's row -- which writes a 15-minute 99-omarchy-nopasswd-$USER and
-  // times it out -- changes nothing observable either way. Kept because it is
-  // harmless and covers the id, with the detail saying why it looks inert.
+  // Upstream's row: after the PIN and a warning it writes a 15-minute
+  // 99-omarchy-nopasswd-$USER and times it out, and running it again ends it
+  // early. Off unless asked for, because sudo asks for the PIN on this image
+  // (docs/structure.md I8); a dev image is passwordless already.
   { id: "sudo", type: "action", glyph: "󰟵", label: "Passwordless sudo",
-    detail: "Already on for this image",
+    detail: "Asks for your PIN, lasts 15 minutes",
     run: "omarchy-launch-floating-terminal-with-presentation omarchy-sudo-passwordless",
     launch: "none", covers: { "setup.security.passwordless-sudo": "B" } },
   // The account's password is the PIN the lock screen asks for, set at first
   // boot (docs/structure.md I8), so changing it is changing the PIN: digits
   // only, 6 to 12 of them, which `passwd` would neither ask for nor check.
   // moarchy-pin-change reads it twice without echo and hands it to the root
-  // helper on stdin; sudo asks for the current PIN once passwordless sudo is
-  // gone. Our script rather than upstream's, so update.password.user is Native
+  // helper on stdin; sudo asks for the current PIN first. Our script rather
+  // than upstream's, so update.password.user is Native
   // now and no longer an E2 exception (docs/settings.md R).
   { id: "pin", type: "action", glyph: "", label: "Change PIN",
     keywords: "password passcode lock screen",

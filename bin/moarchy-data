@@ -8,9 +8,10 @@
 #
 # because NetworkManager's settings.modify.system action is auth_admin, and a
 # polkit prompt raised from the control center would land on top of the control center that asked
-# for it. So this is the privileged half, with sudo -n (passwordless by design
-# on this phone -- docs/structure.md), and docs/control-center.md S29 is the tile that
-# calls it. Reads need no privilege and do not get sudo.
+# for it. So `on` and `off` run this script as root, through the one sudoers
+# rule that names exactly those two (/etc/sudoers.d/30-moarchy-grants,
+# docs/structure.md I8), and docs/control-center.md S29 is the tile that calls
+# it. Reads need no privilege and do not get sudo.
 #
 # Splitting it this way is the same trade as bin/moarchy-sim: QML cannot be
 # tested without a running shell, and this can be run against a phone with a
@@ -20,7 +21,11 @@ set -uo pipefail
 NMCLI=/usr/bin/nmcli
 MMCLI=/usr/bin/mmcli
 
-_nm_root() { sudo -n "$NMCLI" "$@" 2>&1; }
+# Only ever reached as root: on and off are run through sudo below.
+_nm_root() { "$NMCLI" "$@" 2>&1; }
+
+# The path the sudoers rule names, whichever copy was called.
+_as_root() { (( EUID == 0 )) || exec sudo -n /usr/lib/moarchy/bin/moarchy-data "$1"; }
 
 # The gsm connection, resolved by TYPE and never by name.
 #
@@ -189,8 +194,8 @@ EOF
 
 case "${1:-status}" in
   status) status ;;
-  on)     on ;;
-  off)    off ;;
+  on)     _as_root on; on ;;
+  off)    _as_root off; off ;;
   -h|--help|help) usage ;;
   *)      usage >&2; exit 64 ;;
 esac

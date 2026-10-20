@@ -512,6 +512,54 @@ fi
 # anywhere without a password is a new PIN, and root, for anyone.
 _oth=$(grep -ls 'moarchy-pin' "$R/etc/sudoers" "$R"/etc/sudoers.d/* | grep -vxF "$_sud" | sed "s|^$R||" | tr '\n' ' ')
 [ -z "$_oth" ] && ok "no other sudoers file names moarchy-pin" || no "other sudoers files name moarchy-pin: $_oth"
+
+# Every rule sudo reads, against the ones this image means to have
+# (docs/structure.md I8). A rule that runs something as root with no PIN is
+# root for anyone holding an unlocked phone, so each file is held to its exact
+# rules, comments aside, and a file the image does not ship fails however
+# harmless it looks. A comment is a # line that is not #include or a #uid.
+_rules() { awk '{ sub(/^[ \t]+/, "") } $0 == "" { next } /^#/ && !/^#include/ && !/^#[0-9]/ { next } { print }' "$1"; }
+_want_rules() {
+  local f="$R/etc/sudoers.d/$1"; shift
+  if [ ! -f "$f" ]; then no "/etc/sudoers.d/$(basename "$f") missing"; return; fi
+  if [ "$(_rules "$f")" = "$(printf '%s\n' "$@")" ]; then ok "sudoers $(basename "$f") holds exactly its rules"
+  else no "sudoers $(basename "$f") is not exactly its rules -- a widened rule is root without a PIN"; fi
+  [ "$(stat -c '%a %u %g' "$f")" = "440 0 0" ] || no "sudoers $(basename "$f") is $(stat -c '%a %U:%G' "$f"), not 0440 root:root"
+}
+_want_rules 00-moarchy-wheel '%wheel ALL=(ALL:ALL) ALL'
+_want_rules 30-moarchy-grants '%wheel ALL=(root) NOPASSWD: /usr/lib/moarchy/bin/moarchy-data on, /usr/lib/moarchy/bin/moarchy-data off, /usr/lib/moarchy/bin/moarchy-sim unlock'
+_want_rules omarchy-theme-browser '%wheel ALL=(root) NOPASSWD: /usr/bin/omarchy-theme-set-browser-policy [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'
+_want_rules omarchy-dns '%wheel ALL=(root) NOPASSWD: /usr/bin/omarchy-dns Cloudflare, /usr/bin/omarchy-dns Google, /usr/bin/omarchy-dns DHCP'
+_want_rules omarchy-tzupdate '%wheel ALL=(root) NOPASSWD: /usr/bin/timedatectl ^set-timezone [A-Za-z0-9_+][A-Za-z0-9_+.-]*(/[A-Za-z0-9_+][A-Za-z0-9_+.-]*)*$'
+_known="00-moarchy-wheel 20-moarchy-pin 30-moarchy-grants omarchy-theme-browser omarchy-dns omarchy-tzupdate"
+if [ -e "$R/usr/lib/moarchy/bin/moarchy-android-launch" ]; then
+  _want_rules moarchy-android-launch '%wheel ALL=(root) NOPASSWD: /usr/lib/moarchy/bin/moarchy-android-launch ^--start [A-Za-z0-9_][A-Za-z0-9_.]*$'
+  _known="$_known moarchy-android-launch"
+fi
+# Passwordless sudo is a dev image's alone.
+if [ "${DEV_IMAGE:-0}" = 1 ]; then
+  _want_rules 10-moarchy 'moarchy ALL=(ALL) NOPASSWD: ALL'
+  _known="$_known 10-moarchy"
+fi
+_extra=$(for f in "$R"/etc/sudoers.d/*; do [ -e "$f" ] || continue
+           case " $_known " in *" $(basename "$f") "*) ;; *) printf '%s ' "${f#$R}" ;; esac; done)
+[ -z "$_extra" ] && ok "no sudoers file this image does not ship" \
+                 || no "sudoers files this image does not ship: $_extra"
+# The package's /etc/sudoers: no rule in it skips the PIN, and it reads no
+# directory but sudoers.d.
+_main=$(_rules "$R/etc/sudoers" 2>/dev/null)
+if grep -qE 'NOPASSWD|!authenticate' <<<"$_main"; then
+  no "/etc/sudoers has a rule that skips the PIN"
+elif [ "$(grep -E '^[@#]include' <<<"$_main")" != "@includedir /etc/sudoers.d" ]; then
+  no "/etc/sudoers includes something other than /etc/sudoers.d: $(grep -E '^[@#]include' <<<"$_main" | tr '\n' ' ')"
+else
+  ok "/etc/sudoers skips the PIN for nothing and reads only sudoers.d"
+fi
+# The store asks for the PIN, as its own policy says: no rule may answer yes
+# for it.
+_store=$(grep -ls 'store.manage' "$R"/usr/share/polkit-1/rules.d/* "$R"/etc/polkit-1/rules.d/* 2>/dev/null | sed "s|^$R||" | tr '\n' ' ')
+[ -z "$_store" ] && ok "no polkit rule installs store apps without the PIN" \
+                 || no "polkit rules grant the store without the PIN: $_store"
 [ -f "$_sud" ] && { [ "$(stat -c '%a %u %g' "$_sud")" = "440 0 0" ] \
   && ok "20-moarchy-pin is 0440 root:root" \
   || no "20-moarchy-pin is $(stat -c '%a %U:%G' "$_sud"), not 0440 root:root -- sudo ignores it or anyone may edit it"; }

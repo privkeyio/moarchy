@@ -1,0 +1,4 @@
+# sudo for the phone's owner, with the PIN as its password (docs/structure.md
+# I8). Arch's /etc/sudoers leaves this line commented out, and without it the
+# account can run nothing as root at all.
+%wheel ALL=(ALL:ALL) ALL

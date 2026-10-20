@@ -1,6 +1,6 @@
 # The build VM
 
-Building and checking an image means running privileged containers: `arch-chroot` mounts, loop devices, the negative test's planted defects. `scripts/vm/vm.sh` runs them inside a throwaway KVM virtual machine instead of on your machine. Inside, the image steps of CI (`.github/workflows/image.yml`) run in CI's order: the in-repo packages, the published ones, the release image and its verify, the QML tests, the PIN door test, the negative test, and the dev image with its own verify and negative test. CI's first step, the unit tests (`scripts/style-check.sh` and the two `image/boot` tests), needs no privilege and is not repeated in the VM; run it on your machine.
+Building and checking an image means running privileged containers: `arch-chroot` mounts, loop devices, the negative test's planted defects. `scripts/vm/vm.sh` runs them inside a throwaway KVM virtual machine instead of on your machine. Inside, the image steps of CI (`.github/workflows/image.yml`) run in CI's order: the in-repo packages, the published ones, the release image and its verify, the QML tests, the PIN door test, the sudo grants test, the negative test, and the dev image with its own verify and negative test. CI's first step, the unit tests (`scripts/style-check.sh` and the two `image/boot` tests), needs no privilege and is not repeated in the VM; run it on your machine.
 
 CI already does all of this on a fresh GitHub runner for every pull request. The VM is for building and flashing locally without giving a build root on your own machine.
 

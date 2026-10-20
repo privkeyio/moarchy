@@ -19,9 +19,11 @@ die() { printf '!! %s\n' "$*" >&2; exit 1; }
 #     password, so the phone comes up usable with no secret to leak or change.
 #   - sshd is not enabled, and password authentication is off if it is enabled,
 #     so a locked password cannot be brute-forced remotely.
-#   - sudo is passwordless for this account. On a device with no disk
-#     encryption that concedes nothing: anyone holding the phone can read the
-#     SD card. It is the same deliberate choice the dev provisioning makes.
+#   - sudo asks for the PIN the lock screen sets on first boot (the moarchy
+#     package's 00-moarchy-wheel). A few root actions with no terminal to ask
+#     in are granted without it, one command line each (30-moarchy-grants and
+#     upstream's DNS and time zone rules, docs/structure.md I8). Only a dev
+#     image, below, makes sudo passwordless.
 #
 # Setting a real password is `passwd`, and the user can do it from the terminal
 # once the session and its on-screen keyboard are up.
@@ -44,13 +46,11 @@ ExecStart=
 ExecStart=-/sbin/agetty -o '-p -f -- \\u' --noclear --autologin $USER_NAME %I \$TERM
 EOF
 
-printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$USER_NAME" > "$ROOTDIR/etc/sudoers.d/10-moarchy"
-chmod 440 "$ROOTDIR/etc/sudoers.d/10-moarchy"
 # One door to the PIN (bin/moarchy-harden-auth). The moarchy package's pacman
 # hook runs it on every upgrade that would undo it; run here too so the image
 # does not depend on the order pacstrap ran hooks in.
 arch-chroot "$ROOTDIR" /usr/lib/moarchy/bin/moarchy-harden-auth
-say "user $USER_NAME (locked password, passwordless sudo, root locked)"
+say "user $USER_NAME (locked password until the first PIN, sudo asks for it, root locked)"
 
 # sshd off by default, and no password logins if someone turns it on.
 install -d "$ROOTDIR/etc/ssh/sshd_config.d"
@@ -413,8 +413,13 @@ EOF
     printf 'ListenAddress 10.66.0.2\nAllowUsers %s@10.66.0.1\n' "$USER_NAME" \
       >"$ROOTDIR/etc/ssh/sshd_config.d/20-moarchy-usbnet.conf"
     arch-chroot "$ROOTDIR" systemctl enable moarchy-usbnet.service sshd.service >/dev/null 2>&1 || true
+    # Passwordless sudo, on a dev image only: what comes in over the cable
+    # (moarchy-selftest's touch injection, provisioning) has no PIN to give.
+    # image/verify.sh fails a release image that carries this file.
+    printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$USER_NAME" > "$ROOTDIR/etc/sudoers.d/10-moarchy"
+    chmod 440 "$ROOTDIR/etc/sudoers.d/10-moarchy"
     touch "$ROOTDIR/etc/moarchy-debug-image"
-    say "DEBUG IMAGE: $(basename "$MOARCHY_SSH_KEY") authorised for $USER_NAME, sshd on the USB link (10.66.0.2) only -- do not publish this"
+    say "DEBUG IMAGE: $(basename "$MOARCHY_SSH_KEY") authorised for $USER_NAME, sshd on the USB link (10.66.0.2) only, passwordless sudo -- do not publish this"
   fi
 else
   say "no credentials baked in (publishable)"

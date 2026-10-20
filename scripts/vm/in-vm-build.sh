@@ -67,7 +67,7 @@ mkdir -p packages
 if cp "$CACHE"/*.pkg.tar.* packages/ 2>/dev/null; then echo "    the kernel from the cache ($KEY)"; fi
 chmod -R a+rwX packages
 
-echo "==> [1/7] the in-repo packages"
+echo "==> [1/8] the in-repo packages"
 PKGBUILD_ONLY="$(ls pkgbuilds)" ./scripts/provision.sh build
 sudo chown -R "$(id -u):$(id -g)" packages
 # Only kernels this build's manifest names: a package a cut-off build left
@@ -76,24 +76,28 @@ rm -rf "$HOME/kernel-cache" && mkdir -p "$CACHE"
 awk '$2 ~ /^linux-moarchy-sdm670-/ { print "packages/" $2 }' packages/.build-manifest |
   xargs -r cp -t "$CACHE"/
 
-echo "==> [2/7] packages from the published repo"
+echo "==> [2/8] packages from the published repo"
 ./scripts/fetch-published.sh packages
 
-echo "==> [3/7] release image"
+echo "==> [3/8] release image"
 ./scripts/build-image.sh
 sudo chown -R "$(id -u):$(id -g)" images
 ART=$(ls -td images/moarchy-sargo-*/ | head -1); ART=${ART%/}
 verify ./scripts/verify-image.sh "$ART"
 
-echo "==> [4/7] QML tests, in the image container"
+echo "==> [4/8] QML tests, in the image container"
 docker run --rm --platform linux/arm64 -v "$PWD:/repo:ro" --entrypoint bash moarchy-image \
   -c 'pacman -Sy --noconfirm --needed qt6-declarative >/dev/null && bash /repo/scripts/test-qml.sh'
 
-echo "==> [5/7] the PIN's door, through real sudo and PAM"
+echo "==> [5/8] the PIN's door, through real sudo and PAM"
 docker run --rm --platform linux/arm64 -v "$PWD:/repo:ro" --entrypoint bash moarchy-image \
   /repo/scripts/test-pam-door.sh
 
-echo "==> [6/7] negative test"
+echo "==> [6/8] the sudo grants, through real sudo"
+docker run --rm --platform linux/arm64 -v "$PWD:/repo:ro" --entrypoint bash moarchy-image \
+  /repo/scripts/test-sudo-grants.sh
+
+echo "==> [7/8] negative test"
 docker run --rm --privileged --platform linux/arm64 -v "$PWD/images:/img:ro" \
   --entrypoint bash moarchy-image /repo/image/negative-test.sh "/img/$(basename "$ART")"
 mkdir -p ~/out/release
@@ -108,7 +112,7 @@ if [ ! -s "$devkey" ]; then
   ssh-keygen -q -t ed25519 -N '' -C vm-throwaway -f ~/throwaway
   devkey=$HOME/throwaway.pub
 fi
-echo "==> [7/7] dev image, for $(cut -d' ' -f3- "$devkey")"
+echo "==> [8/8] dev image, for $(cut -d' ' -f3- "$devkey")"
 MOARCHY_SSH_KEY=$devkey OUTDIR=$HOME/dev-images ./scripts/build-image.sh
 sudo chown -R "$(id -u):$(id -g)" ~/dev-images
 DEV=$(ls -td ~/dev-images/moarchy-sargo-*/ | head -1); DEV=${DEV%/}

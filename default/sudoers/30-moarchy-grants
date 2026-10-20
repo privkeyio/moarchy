@@ -1,0 +1,6 @@
+# What runs as root with no PIN, because a tile or a keypad asks for it and
+# there is no terminal to ask in (docs/structure.md I8). Each is one command
+# line, exactly: sudoers matches the arguments given here and no others, so
+# none of them takes more. The SIM PIN goes to moarchy-sim on stdin, never in
+# the arguments sudo logs.
+%wheel ALL=(root) NOPASSWD: /usr/lib/moarchy/bin/moarchy-data on, /usr/lib/moarchy/bin/moarchy-data off, /usr/lib/moarchy/bin/moarchy-sim unlock
