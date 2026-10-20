@@ -28,6 +28,10 @@ power_state:
   mode: reboot
   condition: true
 package_update: true
+# The whole image brought up to date with the packages below, rather than
+# those installed against a newer repo than the rest: Arch does not do partial
+# upgrades. It reboots afterwards anyway.
+package_upgrade: true
 packages:
   - docker
   - qemu-user-static
@@ -40,4 +44,6 @@ runcmd:
   - systemctl restart systemd-binfmt
   - usermod -aG docker builder
   - systemctl enable --now docker
-  - touch /var/lib/moarchy-build-ready
+  # The boot this ran in. power_state reboots after it, so `vm.sh wait` takes
+  # the guest as ready only once it is running a later boot than this one.
+  - cat /proc/sys/kernel/random/boot_id > /var/lib/moarchy-build-ready

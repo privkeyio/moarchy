@@ -5,11 +5,12 @@
 #
 #   in-vm-build.sh <ref>
 #
-# ~/in/moarchy.bundle holds <ref>, and ~/in/dev.pub, when present, is the key
-# for a dev image (MOARCHY_SSH_KEY) built and checked alongside the release
-# image. The images and their SHA256SUMS end up in ~/out/{release,dev}, the
-# only thing vm.sh copies back out. The log is ~/build.log; the last line is
-# BUILD OK or BUILD FAILED.
+# ~/in/moarchy.bundle holds <ref>. A dev image (MOARCHY_SSH_KEY) is built and
+# checked beside the release image every time, as CI does, keyed to
+# ~/in/dev.pub when there is one and to a throwaway key otherwise. The images
+# and their SHA256SUMS end up in ~/out/{release,dev}, from where vm.sh copies
+# out the release image and, only when it is yours, the dev one. The log is
+# ~/build.log; the last line is BUILD OK or BUILD FAILED.
 set -euo pipefail
 REF=${1:?usage: in-vm-build.sh <ref>}
 : >~/build.log
@@ -43,24 +44,31 @@ git fetch -q ~/in/moarchy.bundle "$REF"
 git reset -q --hard FETCH_HEAD
 echo "==> commit $(git rev-parse --short HEAD)"
 
-# A clean tree each run, as CI's is, but for the kernel: CI caches it on its
-# recipe, and rebuilding it takes most of an hour under emulation.
-mkdir -p .cache/kernel
-find packages -maxdepth 1 -name 'linux-moarchy-sdm670-*.pkg.tar.*' -exec mv -t .cache/kernel/ {} + 2>/dev/null || true
+# A clean tree each run, as CI's is, but for the kernel, which takes most of an
+# hour under emulation. Cached as CI caches it: keyed on the [device.sargo]
+# pins and the recipe, so a changed config is a rebuild even with no pkgrel
+# bump. vm.sh gives every build a fresh VM unless told to reuse one, so the
+# cache only lives as long as a VM that is being reused.
+KEY=$( { sed -n '/^\[device\.sargo\]/,/^\[/p' manifest.toml;
+         find pkgbuilds/linux-moarchy-sdm670 -type f -print0 | sort -z | xargs -0 sha256sum; } |
+       sha256sum | cut -c1-16)
+CACHE=$HOME/kernel-cache/$KEY
 # sudo first: the image container leaves root's files behind, which git clean
 # cannot remove.
 sudo rm -rf packages images ~/dev-images ~/out
-git clean -q -fdx -e .cache
+git clean -q -fdx
 mkdir -p packages
-cp .cache/kernel/*.pkg.tar.* packages/ 2>/dev/null || true
+if cp "$CACHE"/*.pkg.tar.* packages/ 2>/dev/null; then echo "    the kernel from the cache ($KEY)"; fi
 chmod -R a+rwX packages
 
 echo "==> [1/7] the in-repo packages"
 PKGBUILD_ONLY="$(ls pkgbuilds)" ./scripts/provision.sh build
 sudo chown -R "$(id -u):$(id -g)" packages
-rm -f .cache/kernel/*
+# Only kernels this build's manifest names: a package a cut-off build left
+# behind is not one.
+rm -rf "$HOME/kernel-cache" && mkdir -p "$CACHE"
 awk '$2 ~ /^linux-moarchy-sdm670-/ { print "packages/" $2 }' packages/.build-manifest |
-  xargs -r cp -t .cache/kernel/
+  xargs -r cp -t "$CACHE"/
 
 echo "==> [2/7] packages from the published repo"
 ./scripts/fetch-published.sh packages
@@ -86,18 +94,22 @@ mkdir -p ~/out/release
 cp "$ART"/boot.img "$ART"/vbmeta.img "$ART"/rootfs.simg ~/out/release/
 (cd ~/out/release && sha256sum boot.img vbmeta.img rootfs.simg > SHA256SUMS)
 
-if [ -s ~/in/dev.pub ]; then
-  echo "==> [7/7] dev image, for $(cut -d' ' -f3- ~/in/dev.pub)"
-  MOARCHY_SSH_KEY=$HOME/in/dev.pub OUTDIR=$HOME/dev-images ./scripts/build-image.sh
-  sudo chown -R "$(id -u):$(id -g)" ~/dev-images
-  DEV=$(ls -td ~/dev-images/moarchy-sargo-*/ | head -1); DEV=${DEV%/}
-  verify env DEV_IMAGE=1 ./scripts/verify-image.sh "$DEV"
-  docker run --rm --privileged --platform linux/arm64 -e DEV_IMAGE=1 -v "$(dirname "$DEV"):/img:ro" \
-    --entrypoint bash moarchy-image /repo/image/negative-test.sh "/img/$(basename "$DEV")"
-  mkdir -p ~/out/dev
-  cp "$DEV"/boot.img "$DEV"/vbmeta.img "$DEV"/rootfs.simg ~/out/dev/
-  (cd ~/out/dev && sha256sum boot.img vbmeta.img rootfs.simg > SHA256SUMS)
-else
-  echo "==> [7/7] no dev key given, no dev image"
+# Always, as CI does: with your key in it, or a throwaway one made here, when
+# the image stays in here (vm.sh only copies out a dev image you keyed).
+devkey=$HOME/in/dev.pub
+if [ ! -s "$devkey" ]; then
+  rm -f ~/throwaway ~/throwaway.pub
+  ssh-keygen -q -t ed25519 -N '' -C vm-throwaway -f ~/throwaway
+  devkey=$HOME/throwaway.pub
 fi
+echo "==> [7/7] dev image, for $(cut -d' ' -f3- "$devkey")"
+MOARCHY_SSH_KEY=$devkey OUTDIR=$HOME/dev-images ./scripts/build-image.sh
+sudo chown -R "$(id -u):$(id -g)" ~/dev-images
+DEV=$(ls -td ~/dev-images/moarchy-sargo-*/ | head -1); DEV=${DEV%/}
+verify env DEV_IMAGE=1 ./scripts/verify-image.sh "$DEV"
+docker run --rm --privileged --platform linux/arm64 -e DEV_IMAGE=1 -v "$(dirname "$DEV"):/img:ro" \
+  --entrypoint bash moarchy-image /repo/image/negative-test.sh "/img/$(basename "$DEV")"
+mkdir -p ~/out/dev
+cp "$DEV"/boot.img "$DEV"/vbmeta.img "$DEV"/rootfs.simg ~/out/dev/
+(cd ~/out/dev && sha256sum boot.img vbmeta.img rootfs.simg > SHA256SUMS)
 echo "==> BUILD OK: $(basename "$ART"), commit $(git rev-parse --short HEAD)"

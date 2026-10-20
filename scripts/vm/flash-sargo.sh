@@ -10,7 +10,15 @@
 set -euo pipefail
 dir=${1:?usage: flash-sargo.sh <image-directory>}
 cd "$dir"
-# These prove the files arrived as the VM wrote them, and nothing more.
+# Three regular files, not links to anything else of yours, and a SHA256SUMS
+# that names exactly them, so it opens no other path. The sums prove the files
+# arrived as the VM wrote them, and nothing more.
+for f in boot.img vbmeta.img rootfs.simg SHA256SUMS; do
+  [ -f "$f" ] && [ ! -L "$f" ] || { echo "!! $f is missing or not a regular file" >&2; exit 1; }
+done
+[ "$(awk '{print $2}' SHA256SUMS | sort | tr '\n' ' ')" = "boot.img rootfs.simg vbmeta.img " ] &&
+  ! grep -qvE '^[0-9a-f]{64}  (boot\.img|vbmeta\.img|rootfs\.simg)$' SHA256SUMS ||
+  { echo "!! SHA256SUMS does not list exactly boot.img, vbmeta.img and rootfs.simg" >&2; exit 1; }
 sha256sum -c SHA256SUMS
 
 fastboot devices | grep -q . || { echo "!! no fastboot device" >&2; exit 1; }

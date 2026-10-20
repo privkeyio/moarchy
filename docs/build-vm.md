@@ -1,6 +1,6 @@
 # The build VM
 
-Building and checking an image means running privileged containers: `arch-chroot` mounts, loop devices, the negative test's planted defects. `scripts/vm/vm.sh` runs them inside a throwaway KVM virtual machine instead of on your machine, the same steps in the same order as CI (`.github/workflows/image.yml`). A git bundle of one commit goes in, and so does a public key if you want a dev image. What comes out is the images.
+Building and checking an image means running privileged containers: `arch-chroot` mounts, loop devices, the negative test's planted defects. `scripts/vm/vm.sh` runs them inside a throwaway KVM virtual machine instead of on your machine. Inside, the image steps of CI (`.github/workflows/image.yml`) run in CI's order: the in-repo packages, the published ones, the release image and its verify, the QML tests, the PIN door test, the negative test, and the dev image with its own verify and negative test. CI's first step, the unit tests (`scripts/style-check.sh` and the two `image/boot` tests), needs no privilege and is not repeated in the VM; run it on your machine.
 
 CI already does all of this on a fresh GitHub runner for every pull request. The VM is for building and flashing locally without giving a build root on your own machine.
 
@@ -11,30 +11,33 @@ An x86_64 Linux machine with KVM, and `qemu-system-x86_64`, `qemu-img`, `passt`,
 ## Use
 
 ```sh
-scripts/vm/vm.sh fetch-base        # the pinned Arch cloud image, checked
-scripts/vm/vm.sh setup             # keys, cloud-init seed, a fresh disk
-scripts/vm/vm.sh start
-scripts/vm/vm.sh wait              # first boot installs Docker and qemu-user, then reboots
-scripts/vm/vm.sh check-isolation   # prove the guest cannot reach your loopback
-scripts/vm/vm.sh build HEAD ~/.ssh/id_ed25519.pub
-scripts/vm/vm.sh stop
+scripts/vm/vm.sh fetch-base                          # once: the pinned Arch cloud image, checked
+scripts/vm/vm.sh build HEAD ~/.ssh/id_ed25519.pub    # a fresh VM, the build, the images out
 ```
 
-`build` takes any commit of this repo, and builds the release image and, given a public key, a dev image that admits that key over the USB cable (`docs/structure.md` I5). It prints the build as it goes and fails on anything CI would fail on, with one exception: verify.sh's online-resize check needs a native arm64 kernel, so under the VM's emulation that one FAIL is allowed, and CI checks it.
+`build` takes a commit of this repo from after the build VM existed, and builds it with that commit's own `scripts/vm/in-vm-build.sh`. Each build gets a VM of its own: a fresh disk and a new host key, first boot, `check-isolation`, the build, the images copied out, power off. Nothing one build does can reach the next, its kernel cache included.
 
-The images land in `~/.local/share/moarchy-build-vm/out/<commit>-<time>/{release,dev}`. Flash one with `scripts/vm/flash-sargo.sh <directory>`, the script from this repo, never the `flash.sh` a build writes into its own output: anything that comes out of the VM is data to check, not a program to run. The checksums it checks prove the files arrived as the VM wrote them, and nothing more.
+Give it a public key and the dev image is keyed to it (`docs/structure.md` I5) and copied out with the release image; without one, the dev image is built and checked with a throwaway key, as CI does, and stays in the VM. The build is followed as it runs, and fails on anything CI's image steps would fail on, with one exception: verify.sh's online-resize check needs a native arm64 kernel, so under the VM's emulation that one FAIL is allowed, and CI checks it.
 
-Everything the VM keeps (its base image, keys, disk and output) is under `$MOARCHY_VM_DIR`, by default `~/.local/share/moarchy-build-vm`, and never in the repo. `VM_CPUS`, `VM_MEM`, `VM_DISK`, `VM_PORT` and `VM_DNS` override the defaults at the top of `vm.sh`. `vm.sh destroy` deletes the disk; the next `setup` starts from the clean base image again.
+The images land in `~/.local/share/moarchy-build-vm/out/<commit>-<time>.<id>/{release,dev}`. Flash one with `scripts/vm/flash-sargo.sh <directory>`, the script from this repo, never the `flash.sh` a build writes into its own output: anything that comes out of the VM is data to check, not a program to run. Only the four expected files come out, each copied by name as plain bytes with a size cap, and `SHA256SUMS` must name exactly the three images. The checksums prove the files arrived as the VM wrote them, and nothing more.
+
+The steps also run one at a time, to look around in a VM: `setup`, `start`, `wait`, `check-isolation`, `ssh`, `stop`, `destroy`. `VM_REUSE=1 vm.sh build ...` builds in the VM that is already running, with its kernel cache, which is faster and trusts every ref built in that VM since its last `setup`.
+
+Everything the VM keeps (its base image, keys, disk and output) is under `$MOARCHY_VM_DIR`, by default `~/.local/share/moarchy-build-vm`, mode 0700, and never in the repo. `VM_CPUS`, `VM_MEM`, `VM_DISK`, `VM_PORT` and `VM_DNS` override the defaults at the top of `vm.sh`.
+
+What goes in is a git bundle of the commit, which carries the history behind it too, unpushed commits included, and the public key if you gave one.
 
 ## What the isolation is, and is not
 
-- **The host's loopback is unreachable.** passt runs with `--map-host-loopback none`, under which packets the guest sends to the host's loopback are dropped (passt(1)). `check-isolation` tests that on your machine, rather than leaving it to this sentence. It puts a listener on `127.0.0.1` and has the guest try every address that could lead to it, and it checks the guest's own HTTPS works, so a dead network cannot pass for isolation.
-- **The guest reaches the network**, including your LAN. Builds download packages, so this is the residual risk: a build step that misbehaved could talk to other machines on your network.
-- **SSH into the guest is pinned.** `setup` makes the guest's host key on your side and hands it over, so the first connection is already checked. A dedicated client key is the only one ever offered, and nothing prompts.
-- **No shared directory, socket or device.** Nothing is mounted into the guest. QEMU and passt run as you.
+- **The host's loopback is unreachable.** passt runs with `--map-host-loopback none`, under which packets the guest sends to the host's loopback are dropped (passt(1)). `check-isolation` tests that on your machine: it puts listeners on `127.0.0.1` and `::1`, has the guest try its IPv4 and IPv6 gateways, and fails if either listener logs any connection at all. The verdict is the host's, not the guest's, and the guest's own HTTPS has to work, so a dead network cannot pass for isolation.
+- **Everything else on your network is reachable, this machine included.** passt opens the guest's connections as ordinary sockets of yours, so the guest reaches your LAN, and every non-loopback address of this machine: services listening on `0.0.0.0`, Docker's bridge, a VPN's or Tailscale's address. Since that traffic is local, a firewall that keeps the LAN out of those services usually lets it through. On a cloud host that includes the metadata service at `169.254.169.254`. Builds need the network for packages, so this is the residual risk: a build step that misbehaved could reach them.
+- **QEMU and passt run as you.** passt sandboxes itself; QEMU runs under its own seccomp filter (`-sandbox on`, no new privileges, no spawning, no obsolete syscalls). An escape from the VM would still be code running as your user.
+- **SSH into the guest is pinned.** Every `setup` makes a new host key on your side and hands it over in the seed, which is deleted once first boot has used it, so the first connection is already checked. A dedicated client key is the only one ever offered, and nothing prompts.
+- **No shared directory, socket or device.** Nothing is mounted into the guest, and the only port forward is SSH, on `127.0.0.1`.
+- **What the guest prints is cleaned** of terminal control sequences before it reaches your terminal.
 
 ## The base image
 
-The VM is Arch Linux's official x86_64 cloud image from `arch-boxes`. `manifest.toml` `[build-vm]` pins the release, its sha256 and the fingerprint of the key that signs it. `fetch-base` refuses anything that does not match all three. The key block itself is in `scripts/vm/arch-boxes.asc`, so the check trusts nothing it downloads alongside the image.
+The VM is Arch Linux's official x86_64 cloud image from `arch-boxes`. `manifest.toml` `[build-vm]` pins the release, its sha256 and the fingerprint of the key that signs it. `fetch-base` refuses anything that does not match all three, or whose signature is bad, expired or revoked. The key block itself is in `scripts/vm/arch-boxes.asc`, so the check trusts nothing it downloads alongside the image.
 
-That key's only published home is the `arch-boxes` README on gitlab.archlinux.org: it is self-signed, and on 2026-10-19 it was not in the pacman keyring, on keys.openpgp.org or in Arch's WKD. To move to a newer release, take the new version's `.SHA256`, check its `.sig` against `arch-boxes.asc`, and change `version` and `sha256` together.
+That key's only published home is the `arch-boxes` README on gitlab.archlinux.org: it is self-signed, and on 2026-10-19 it was not in the pacman keyring, on keys.openpgp.org or in Arch's WKD. Its signing subkey expires on 2027-05-28; after that, refresh `arch-boxes.asc` from the README and check its fingerprint against `signing-key` before moving the pin. To move to a newer release, take the new version's `.SHA256`, check its `.sig` against `arch-boxes.asc`, and change `version` and `sha256` together.
