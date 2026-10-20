@@ -49,21 +49,48 @@ LOCK_AFTER=0.55
 
 now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
 
-# While a lock is being taken (`locking`, or no file at all in the seconds
+# The state file names the compositor it was written under: tmpfs outlives a
+# Hyprland that exits and is started again, and a `locked` left by the last
+# one says nothing about this one, whose lock may not be up yet.
+read_state() {
+  local st sig
+  read -r st sig <"$LOCK_STATE" 2>/dev/null || true
+  [[ $sig == "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]] && echo "$st"
+}
+
+# While a lock is being taken (`locking`, or no state at all in the seconds
 # after boot) the session is still reachable under it, so a press must not
-# wake the touchscreen. Wait a moment for the lock to come up; if it does not,
-# light the panel and nothing else, and moarchy.lock lights the rest once its
-# lock is secure.
-state=$(cat "$LOCK_STATE" 2>/dev/null)
+# wake the touchscreen. Wait a moment for the lock to come up.
+state=$(read_state)
 for _ in $(seq 30); do
   [[ $state == locked || $state == unlocked ]] && break
   sleep 0.1
-  state=$(cat "$LOCK_STATE" 2>/dev/null)
+  state=$(read_state)
 done
 case $state in
   unlocked) ;;
   locked)   exec moarchy-screen toggle ;;
-  *)        exec moarchy-screen light ;;
+  *)
+    # Still not up: the panel, and the touchscreen only once there is a lock
+    # surface to touch. A lock may only be made secure once its surface has
+    # been drawn, and a lit panel is what lets it be.
+    moarchy-screen light
+    for _ in $(seq 30); do
+      [[ $(read_state) == locked ]] && exec moarchy-screen unlock
+      sleep 0.1
+    done
+    # A shell that answers, with no lock in it (one started before an upgrade
+    # that added it): nothing will lock this session and nothing is behind the
+    # panel but the session itself, so give it back rather than strand the
+    # phone dark-to-touch. omarchy-shell exits 0 either way, so the answer is
+    # read, not the exit code. A shell that is not up yet (boot) answers
+    # nothing, and the lock lights the rest once it is.
+    if [[ -n $(omarchy-shell shell listPlugins 2>/dev/null) &&
+          ! $(omarchy-shell moarchy-lock isLocked 2>/dev/null) =~ ^(true|false)$ ]]; then
+      hyprctl dispatch 'hl.dsp.submap("reset")' >/dev/null 2>&1
+      exec moarchy-screen unlock
+    fi
+    exit 0 ;;
 esac
 
 mkdir -p "$STATE_DIR"

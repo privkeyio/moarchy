@@ -1,5 +1,5 @@
 diff --git a/config/omarchy/shell.json b/config/omarchy/shell.json
-index e6202da..548f01a 100644
+index e6202da..f800fde 100644
 --- a/config/omarchy/shell.json
 +++ b/config/omarchy/shell.json
 @@ -1,8 +1,8 @@
@@ -334,10 +334,10 @@ index 738529d..9c44719 100644
    }
  
 diff --git a/shell/services/PluginRegistry.qml b/shell/services/PluginRegistry.qml
-index e8b8ad3..7585635 100644
+index e8b8ad3..7c95178 100644
 --- a/shell/services/PluginRegistry.qml
 +++ b/shell/services/PluginRegistry.qml
-@@ -10,6 +10,15 @@ QtObject {
+@@ -10,6 +10,23 @@ QtObject {
    property string home: Quickshell.env("HOME")
    property string pluginsDir: home + "/.config/omarchy/plugins"
  
@@ -350,10 +350,26 @@ index e8b8ad3..7585635 100644
 +  // win: parseScanOutput keys thirdParty by id and the last write survives.
 +  property string systemPluginsDir: "/usr/share/moarchy/plugins"
 +
++  // Enabled whatever shell.json says, and not offered as a switch. A user
++  // shell.json replaces the default plugin list outright, and tools that write
++  // one (`omarchy plugin enable`, every install-on-device.sh) freeze whatever
++  // list was current, so a list from before moarchy.lock existed would leave
++  // the phone with no lock: and a phone that blanks its panel and holds its
++  // keyboard until a lock is up would come up with neither.
++  readonly property var requiredPlugins: ["moarchy.lock"]
++
    // Set by shell.qml at startup so we can also scan bundled first-party plugins.
    property string firstPartyDir: ""
  
-@@ -715,8 +724,9 @@ QtObject {
+@@ -157,6 +174,7 @@ QtObject {
+         if (!selectedBar) selectedBar = "omarchy.bar"
+         return selectedBar === key
+       }
++      if (requiredPlugins.indexOf(key) !== -1) return true
+       if (isDisabled(config, key)) return false
+       if (manifest.__isFirstParty) return true
+     }
+@@ -715,8 +733,9 @@ QtObject {
        + "  done; "
        + "}; "
        + "scan_firstparty \"$0\"; "
@@ -365,7 +381,7 @@ index e8b8ad3..7585635 100644
    }
  
 diff --git a/shell/shell.qml b/shell/shell.qml
-index 0cc0575..235daf6 100644
+index 0cc0575..146fe4f 100644
 --- a/shell/shell.qml
 +++ b/shell/shell.qml
 @@ -736,15 +736,58 @@ ShellRoot {
@@ -429,7 +445,7 @@ index 0cc0575..235daf6 100644
      var key = String(manifest.id || "")
      if (!key) return null
      if (_pluginRegistryApis[key]) return _pluginRegistryApis[key]
-@@ -768,8 +809,8 @@ ShellRoot {
+@@ -768,7 +811,7 @@ ShellRoot {
    }
  
    function pluginBarWidgetRegistryFor(manifest) {
@@ -438,3 +454,12 @@ index 0cc0575..235daf6 100644
      var key = String(manifest.id || "")
      if (!key) return null
      if (_pluginBarWidgetRegistryApis[key]) return _pluginBarWidgetRegistryApis[key]
+@@ -1685,7 +1728,7 @@ ShellRoot {
+           // another, so there is nothing for disable to do to it. Said here so
+           // that a caller offering the verbs does not have to read kinds and
+           // work it out again.
+-          canDisable: !isBarOption,
++          canDisable: !isBarOption && shell.pluginRegistry.requiredPlugins.indexOf(id) === -1,
+           firstParty: !!plugins[id].__isFirstParty,
+           clonedFrom: clonedFrom
+         })

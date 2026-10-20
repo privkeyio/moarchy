@@ -204,7 +204,9 @@ expect "pam: not without PAM_USER" "$(run pam '246813')" "rc=2 out= err=moarchy-
 # in this shadow file) is refused without a count, and the owner's count does
 # not move, so no service account can keep the owner's lock screen paused.
 ENVV=("PAM_TYPE=auth" "PAM_USER=nobody")
-expect "pam: an account with no password is refused uncounted" "$(run pam '111111')" "rc=4 out=Wrong PIN err="
+expect "pam: an account with no password is refused uncounted" \
+  "$(run pam '111111') $(asroot test -e "$WORK/varlib/moarchy/pin/guard-$(getent passwd nobody | cut -d: -f3)" && echo counted || echo uncounted)" \
+  "rc=4 out=Wrong PIN err= uncounted"
 expect "and the owner's count is untouched" "$(guard)" "0 0"
 ENVV=("SUDO_USER=$U")
 printf '%s:!:20000:0:99999:7:::\n' "$U" >"$WORK/shadow"

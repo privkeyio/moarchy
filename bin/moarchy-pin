@@ -79,7 +79,9 @@ else
   user=${SUDO_USER:-}
 fi
 [[ -n $user && $user != root ]] || die "no user to check a PIN for"
-uid=$(id -u -- "$user" 2>/dev/null) || die "no such user: $user"
+# By exact name: `id` would also take a number, or `+1000`, for a uid.
+uid=$(getent passwd -- "$user" | cut -d: -f3)
+[[ $uid =~ ^[0-9]+$ ]] || die "no such user: $user"
 GUARD=$STATE/guard-$uid
 
 if [[ $mode == state ]]; then
@@ -159,8 +161,9 @@ if [[ $mode == check || $mode == pam ]]; then
   # else is a check that could not be made, and is refunded rather than
   # counted, or a broken libcrypt would turn every right PIN into a pause.
   printf '%s' "$pin" | python3 -I -c '
-import ctypes, ctypes.util, sys
+import sys
 try:
+    import ctypes, ctypes.util
     user, pin = sys.argv[1], sys.stdin.buffer.read()
     with open("/etc/shadow", "rb") as f:
         hashed = next((l.split(b":")[1] for l in f if l.split(b":")[0] == user.encode()), b"")

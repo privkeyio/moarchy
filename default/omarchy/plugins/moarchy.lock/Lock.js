@@ -26,15 +26,20 @@ function canLock(mode) {
   return mode === "pin" || mode === "setup"
 }
 
-// At shell start, from the state file the last shell left in $XDG_RUNTIME_DIR.
+// At shell start, from the state file the last shell left in $XDG_RUNTIME_DIR:
+// `<state> <HYPRLAND_INSTANCE_SIGNATURE>`. A state from another compositor is
+// no state at all: tmpfs outlives a Hyprland that exits and starts again, and
+// this one's lock is not up just because the last one's was.
 //
 //   none    it said unlocked: a shell restart, and the user stays unlocked
 //   relock  it said locked, or locking: a restart while locked, panel left as
 //           it is
 //   boot    no file, which tmpfs means a fresh boot: lock, and light the panel
 //           autostart.lua blanked until the lock was up
-function startupAction(text) {
-  var t = String(text || "").trim()
+function startupAction(text, signature) {
+  var parts = String(text || "").trim().split(/\s+/)
+  if ((parts[1] || "") !== String(signature || "")) return "boot"
+  var t = parts[0]
   if (t === "unlocked") return "none"
   if (t === "locked" || t === "locking") return "relock"
   return "boot"

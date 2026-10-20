@@ -49,6 +49,8 @@ Item {
   readonly property string userName: Quickshell.env("USER") || Quickshell.env("LOGNAME")
   readonly property string currentBackgroundLink: home + "/.local/state/omarchy/current/background"
   readonly property string stateFilePath: (Quickshell.env("XDG_RUNTIME_DIR") || "/nonexistent") + "/moarchy-lock-state"
+  // Which compositor the state belongs to (Lock.startupAction says why).
+  readonly property string compositor: Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") || ""
 
   // Absolute, for the reason moarchy.sim gives at length: a shell restarted
   // outside a login session can come up without /usr/lib/moarchy/bin on PATH.
@@ -163,6 +165,9 @@ Item {
   function handleStartup() {
     var action = startup
     startup = ""
+    // Unlocked already, but autostart.lua may have put the keyboard in the
+    // boot submap all the same (a Hyprland restarted under a live session).
+    if (action === "none") releaseKeyboard()
     if (action === "" || action === "none" || locked) return
     if (!lockable) {
       logEvent("lock-at-start: not possible (" + accountMode + ")")
@@ -200,7 +205,7 @@ Item {
   // From this process and synchronously, so a lock right after an unlock can
   // never leave the file saying unlocked.
   function writeState(state) {
-    stateFile.setText(state + "\n")
+    stateFile.setText(state + " " + root.compositor + "\n")
   }
 
   // Out of the boot submap autostart.lua put the keyboard in (bindings.lua).
@@ -372,6 +377,11 @@ Item {
         pendingSessionLockTimer.stop()
         root.resetAuthenticationState()
         root.writeState("unlocked")
+        root.releaseKeyboard()
+        if (root.lightWhenSecure) {
+          root.lightWhenSecure = false
+          Quickshell.execDetached([root.screenTool, "unlock"])
+        }
       }
     }
 
@@ -599,7 +609,7 @@ Item {
 
   Component.onCompleted: {
     refreshBackground()
-    startup = Lock.startupAction(stateFile.text())
+    startup = Lock.startupAction(stateFile.text(), root.compositor)
     refreshAccount()
     checkStrandedLock()
   }

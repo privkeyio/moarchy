@@ -36,9 +36,16 @@ LINE='auth       [success=1 default=bad]     pam_exec.so          quiet quiet_lo
 PAMBASE='auth       [success=1 default=bad]     pam_unix.so          try_first_pass nullok'
 CHECKERS='unix_chkpwd su chfn chsh passwd ksu'
 
+# Any auth line that hands the check to moarchy-pin, this LINE or an older
+# release's, so --undo still finds it after LINE changes.
+OURS='^auth\s.*pam_exec\.so\s.*/usr/lib/moarchy/bin/moarchy-pin pam\s*$'
+
 if [[ ${1:-} == --undo ]]; then
-  grep -qxF "$LINE" "$SA" || exit 0
-  sed -i "s|^$(printf '%s' "$LINE" | sed 's/[][\.|*^$]/\\&/g')\$|$PAMBASE|" "$SA"
+  grep -qE "$OURS" "$SA" || exit 0
+  sed -i -E "s|$OURS|$PAMBASE|" "$SA"
+  # Still naming the helper is no sudo once it is gone; AbortOnFail stops the
+  # removal on this.
+  grep -qE "$OURS" "$SA" && die "system-auth still names moarchy-pin; not removing it"
   grep -qxF "$PAMBASE" "$SA" || die "could not put pam_unix back in $SA"
   exit 0
 fi
@@ -47,6 +54,20 @@ for f in $CHECKERS; do
   if [[ -e /usr/bin/$f ]]; then chmod u-s,g-s "/usr/bin/$f"; fi
 done
 
+# Any other PAM stack that checks a password with pam_unix itself is another
+# door, uncounted. Those of programs that cannot run as root for anyone else
+# are harmless (image/verify.sh keeps the same list); a new one, from a
+# package installed since the image was built, is said at every boot.
+for p in /etc/pam.d/* /usr/lib/pam.d/*; do
+  [[ -f $p ]] && grep -qE '^\s*-?auth\s.*pam_unix\.so' "$p" || continue
+  case ${p##*/} in system-auth|su|su-l|chfn|chsh|vlock) continue ;; esac
+  echo "${0##*/}: warning: $p checks passwords with pam_unix, outside moarchy-pin's count" >&2
+done
+
+# An older release's line becomes this one.
+if ! grep -qxF "$LINE" "$SA" && grep -qE "$OURS" "$SA"; then
+  sed -i -E "s|$OURS|$LINE|" "$SA"
+fi
 # Done only when ours is there and pam_unix checks nothing else in it: a
 # pacdiff merge that kept both would still answer guesses uncounted.
 if grep -qxF "$LINE" "$SA"; then

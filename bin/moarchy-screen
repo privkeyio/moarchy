@@ -71,9 +71,10 @@ case "${1:-toggle}" in
   # behind our back. Every caller that means "display on" comes here rather
   # than to hyprctl, so the flag is the single gate (D1).
   wake)   [[ -e $FLAG ]] || dpms on ;;
-  # The panel on and nothing else: the touchscreen stays as it is and so does
-  # the flag. What the power button does while the session is being locked and
-  # the lock is not up yet, when a live touchscreen would reach the session.
-  light)  dpms on ;;
+  # The panel on and the touchscreen off, flag untouched. What the power button
+  # does while the session is being locked and the lock is not up yet, when a
+  # live touchscreen would reach the session. Off again rather than assumed
+  # off: one that registered after the boot blank was never switched off.
+  light)  set_touch false; dpms on ;;
   *)      echo "usage: ${0##*/} [lock|unlock|toggle|blank|wake|light]" >&2; exit 1 ;;
 esac

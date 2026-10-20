@@ -20,7 +20,7 @@ for b in $(sed -n "s/^CHECKERS='\(.*\)'$/\1/p" "$HARDEN"); do [[ -e /usr/bin/$b 
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-mkdir -p "$WORK/pam.d" "$WORK/bin"
+mkdir -p "$WORK/pam.d" "$WORK/bin" "$WORK/libpam.d"
 
 # pambase 20260616-1's system-auth, as the phone ships it.
 pambase() {
@@ -70,12 +70,16 @@ run() {
   local out rc args=() undo=${1:-}
   if [[ $backend == bwrap ]]; then
     for b in "${BINS[@]}"; do args+=(--bind "$WORK/bin/$b" "/usr/bin/$b"); done
+    # This machine's own vendor PAM stacks are not the subject, and any it has
+    # would be warned about in the output under test.
+    [[ -d /usr/lib/pam.d ]] && args+=(--bind "$WORK/libpam.d" /usr/lib/pam.d)
     out=$(bwrap --bind / / --dev /dev --bind "$WORK/pam.d" /etc/pam.d "${args[@]}" \
       --unshare-user --uid 0 --gid 0 "$HARDEN" $undo 2>&1)
   else
     out=$(sudo -n unshare -m --propagation private bash -c '
       w=$1 h=$2 u=$3; shift 3
       mount --bind "$w/pam.d" /etc/pam.d || exit 99
+      if [[ -d /usr/lib/pam.d ]]; then mount --bind "$w/libpam.d" /usr/lib/pam.d || exit 99; fi
       for b; do [[ -e /usr/bin/$b ]] || continue; mount --bind "$w/bin/$b" "/usr/bin/$b" || exit 99; done
       exec "$h" $u' bash "$WORK" "$HARDEN" "$undo" "${BINS[@]}" 2>&1)
   fi
@@ -113,6 +117,20 @@ expect "and left as it was" "$(cmp -s "$WORK/before" "$WORK/pam.d/system-auth" &
 pambase >"$WORK/pam.d/system-auth"; setuid_bins; run >/dev/null
 expect "--undo puts pambase's line back" "$(run --undo) $(diff <(pambase) "$WORK/pam.d/system-auth" >/dev/null && echo pambase)" "rc=0 out= pambase"
 expect "--undo on an untouched system-auth does nothing" "$(run --undo) $(diff <(pambase) "$WORK/pam.d/system-auth" >/dev/null && echo pambase)" "rc=0 out= pambase"
+# A PAM stack installed later that checks with pam_unix itself is said.
+pambase >"$WORK/pam.d/system-auth"; setuid_bins
+printf 'auth required pam_unix.so\n' >"$WORK/pam.d/cups"
+expect "a later PAM stack outside the count is warned about" "$(run)" "rc=0 out=moarchy-harden-auth: warning: /etc/pam.d/cups checks passwords with pam_unix, outside moarchy-pin's count"
+rm -f "$WORK/pam.d/cups"
+
+# A line from an older release (here, one without `stdout`): upgraded to this
+# one, and undone just the same, so removing a future moarchy never leaves
+# system-auth naming a helper that is gone.
+OLDER='auth       [success=1 default=bad]     pam_exec.so          quiet expose_authtok seteuid /usr/lib/moarchy/bin/moarchy-pin pam'
+pambase | sed "s|^auth\s*\[success=1 default=bad\]\s*pam_unix.so.*$|$OLDER|" >"$WORK/pam.d/system-auth"
+expect "an older release's line becomes this one" "$(run) $(grep -cxF "$LINE" "$WORK/pam.d/system-auth")" "rc=0 out= 1"
+pambase | sed "s|^auth\s*\[success=1 default=bad\]\s*pam_unix.so.*$|$OLDER|" >"$WORK/pam.d/system-auth"
+expect "and --undo takes an older line out too" "$(run --undo) $(diff <(pambase) "$WORK/pam.d/system-auth" >/dev/null && echo pambase)" "rc=0 out= pambase"
 [[ -n $LINE && ${#BINS[@]} -ge 5 ]] && printf '  PASS  %s\n' "LINE and CHECKERS are read from the script" \
   || { printf '  FAIL  %s\n' "LINE or CHECKERS could not be read from the script"; fail=$((fail + 1)); }
 

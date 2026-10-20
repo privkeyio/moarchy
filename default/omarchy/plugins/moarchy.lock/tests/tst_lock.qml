@@ -39,11 +39,19 @@ TestCase {
   }
 
   function test_what_a_shell_start_does() {
-    compare(Lock.startupAction("unlocked\n"), "none")
-    compare(Lock.startupAction("locked\n"), "relock")
-    compare(Lock.startupAction("locking\n"), "relock")
-    compare(Lock.startupAction(""), "boot")
-    compare(Lock.startupAction("nonsense"), "boot")
+    compare(Lock.startupAction("unlocked sig1\n", "sig1"), "none")
+    compare(Lock.startupAction("locked sig1\n", "sig1"), "relock")
+    compare(Lock.startupAction("locking sig1\n", "sig1"), "relock")
+    compare(Lock.startupAction("", "sig1"), "boot")
+    compare(Lock.startupAction("nonsense sig1", "sig1"), "boot")
+  }
+
+  // tmpfs outlives a Hyprland that exits and starts again: the last one's
+  // `unlocked` must not leave this one unlocked.
+  function test_a_state_from_another_compositor_is_none() {
+    compare(Lock.startupAction("unlocked sig1\n", "sig2"), "boot")
+    compare(Lock.startupAction("locked sig1\n", "sig2"), "boot")
+    compare(Lock.startupAction("unlocked\n", "sig2"), "boot")
   }
 
   function test_a_right_pin_unlocks() {

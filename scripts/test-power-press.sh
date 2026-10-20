@@ -22,6 +22,7 @@ trap 'rm -rf "$WORK"' EXIT
 export HOME="$WORK/home"
 export XDG_STATE_HOME="$HOME/.local/state"
 export XDG_RUNTIME_DIR="$WORK/run"
+export HYPRLAND_INSTANCE_SIGNATURE=this-compositor
 mkdir -p "$XDG_STATE_HOME/moarchy" "$XDG_RUNTIME_DIR" "$WORK/bin"
 
 # Stubs that record rather than act.
@@ -32,6 +33,7 @@ flag="$XDG_STATE_HOME/moarchy/screen-locked"
 case $1 in
   lock)   : >"$flag" ;;
   unlock) rm -f "$flag" ;;
+  light)  ;;
   toggle) if [[ -e $flag ]]; then rm -f "$flag"; else : >"$flag"; fi ;;
 esac
 E
@@ -39,11 +41,22 @@ cat > "$WORK/bin/moarchy-trigger" <<'E'
 #!/bin/bash
 printf 'trigger:%s:%s\n' "$1" "$2" >>"$XDG_STATE_HOME/moarchy/calls"
 E
+# The shell: up (SHELL_UP=1) or not, with the lock plugin in it (LOCK_UP=1)
+# or not. Its lock writes `locked` the way moarchy.lock does once secure.
+# Queries are answered but not recorded; only actions are.
 cat > "$WORK/bin/omarchy-shell" <<'E'
 #!/bin/bash
+case "$1 $2" in
+  "shell listPlugins") [[ ${SHELL_UP:-0} == 1 ]] && echo '[]'; exit 0 ;;
+  "moarchy-lock isLocked") [[ ${LOCK_UP:-0} == 1 ]] && echo false || echo "Target not found."; exit 0 ;;
+esac
 printf 'shell:%s:%s\n' "$1" "$2" >>"$XDG_STATE_HOME/moarchy/calls"
-[[ $1 == moarchy-lock && $2 == lock ]] && echo locked >"$XDG_RUNTIME_DIR/moarchy-lock-state"
+[[ $1 == moarchy-lock && $2 == lock ]] && echo "locked $HYPRLAND_INSTANCE_SIGNATURE" >"$XDG_RUNTIME_DIR/moarchy-lock-state"
 echo ok
+E
+cat > "$WORK/bin/hyprctl" <<'E'
+#!/bin/bash
+printf 'hyprctl:%s\n' "$2" >>"$XDG_STATE_HOME/moarchy/calls"
 E
 chmod +x "$WORK/bin"/*
 export PATH="$WORK/bin:$PATH"
@@ -60,7 +73,7 @@ reset() {
   : >"$CALLS"
   rm -f "$XDG_STATE_HOME/moarchy/power-press" "$XDG_STATE_HOME/moarchy/power-double" \
         "$XDG_STATE_HOME/moarchy/screen-locked"
-  echo unlocked >"$LOCK_STATE"
+  echo "unlocked $HYPRLAND_INSTANCE_SIGNATURE" >"$LOCK_STATE"
 }
 calls() { tr '\n' ' ' <"$CALLS"; }
 # Past the delayed lock's sleep, so whatever it was going to do is done.
@@ -122,9 +135,10 @@ settle
   || no "a second press at 450ms did: $(calls)"
 
 # --- while the lock is being taken ---------------------------------------
-# No state file (the seconds after boot), or `locking` that never becomes
-# `locked`: after waiting for it, the panel lights and the touchscreen does
-# not, since the session is still reachable under a lock that is not up.
+# No state (the seconds after boot, or one left by another compositor), or
+# `locking` that never becomes `locked`: the panel lights after the wait and
+# the touchscreen does not, since the session is still reachable under a lock
+# that is not up. With the shell not up yet, that is all.
 reset
 rm -f "$LOCK_STATE"
 bash "$PRESS" >/dev/null 2>&1
@@ -132,20 +146,42 @@ bash "$PRESS" >/dev/null 2>&1
   && ok "before any lock state a press lights the panel and nothing else" \
   || no "before any lock state a press did: $(calls)"
 reset
-echo locking >"$LOCK_STATE"
+echo "unlocked another-compositor" >"$LOCK_STATE"
 bash "$PRESS" >/dev/null 2>&1
+[[ $(calls) == "screen:light " ]] \
+  && ok "an unlocked left by another compositor is no state at all" \
+  || no "under another compositor's state a press did: $(calls)"
+reset
+echo "locking $HYPRLAND_INSTANCE_SIGNATURE" >"$LOCK_STATE"
+SHELL_UP=1 LOCK_UP=1 bash "$PRESS" >/dev/null 2>&1
 [[ $(calls) == "screen:light " ]] \
   && ok "a lock that never becomes secure: the panel only" \
   || no "under a lock that never became secure a press did: $(calls)"
-# And one that does, while the press waits: a normal press on a locked phone.
+# One that becomes secure while the press waits, before or after the panel is lit.
 reset
-echo locking >"$LOCK_STATE"
-( sleep 0.5; echo locked >"$LOCK_STATE" ) &
+echo "locking $HYPRLAND_INSTANCE_SIGNATURE" >"$LOCK_STATE"
+( sleep 0.5; echo "locked $HYPRLAND_INSTANCE_SIGNATURE" >"$LOCK_STATE" ) &
 bash "$PRESS" >/dev/null 2>&1
 wait
 [[ $(calls) == "screen:toggle " ]] \
   && ok "a press during locking waits for the lock and then toggles" \
   || no "a press during locking did: $(calls)"
+reset
+echo "locking $HYPRLAND_INSTANCE_SIGNATURE" >"$LOCK_STATE"
+( sleep 3.5; echo "locked $HYPRLAND_INSTANCE_SIGNATURE" >"$LOCK_STATE" ) &
+bash "$PRESS" >/dev/null 2>&1
+wait
+[[ $(calls) == "screen:light screen:unlock " ]] \
+  && ok "a lock made secure only once the panel is lit: then the touchscreen too" \
+  || no "a lock made secure after the panel lit did: $(calls)"
+# A running shell with no lock in it (an upgrade not yet restarted into):
+# nothing will lock, so the phone is given back rather than left deaf.
+reset
+rm -f "$LOCK_STATE"
+SHELL_UP=1 LOCK_UP=0 bash "$PRESS" >/dev/null 2>&1
+[[ $(calls) == 'screen:light hyprctl:hl.dsp.submap("reset") screen:unlock ' ]] \
+  && ok "a shell with no lock in it gets the phone back, keyboard included" \
+  || no "with a shell but no lock a press did: $(calls)"
 
 # --- three fast presses ---------------------------------------------------
 # Q11b. A double and then a single, not two overlapping doubles. The single
@@ -165,7 +201,7 @@ settle
 # --- presses on a locked session ------------------------------------------
 # Q11e. The panel only: no stamp read, no trigger, nothing locked again.
 reset
-echo locked >"$LOCK_STATE"
+echo "locked $HYPRLAND_INSTANCE_SIGNATURE" >"$LOCK_STATE"
 bash "$PRESS" >/dev/null 2>&1
 bash "$PRESS" >/dev/null 2>&1
 settle
