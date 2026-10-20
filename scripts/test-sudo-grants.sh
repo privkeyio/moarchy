@@ -90,13 +90,23 @@ expect "moarchy-sim sees its grant" "$(lists '/usr/lib/moarchy/bin/moarchy-sim u
 echo "== mobile data"
 install -m755 "$REPO/bin/moarchy-data" /usr/lib/moarchy/bin/moarchy-data
 U=11111111-2222-3333-4444-555555555555
-stub /usr/bin/nmcli "case \"\$*\" in *'UUID,TYPE,ACTIVE c show'*) echo '$U:gsm:no' ;; esac"
+P=99999999-8888-7777-6666-555555555555
+# A user-owned gsm profile, active and listed first, which any process of the
+# user's could have made.
+stub /usr/bin/nmcli "case \"\$*\" in
+  *'UUID,TYPE,ACTIVE c show'*) echo '$P:gsm:yes'; echo '$U:gsm:no' ;;
+  '-g connection.permissions c show $P') echo 'user:tester' ;;
+esac"
 reset; as_tester '/usr/lib/moarchy/bin/moarchy-data on' >/dev/null
 expect "on writes the setting as root" "$(grep -c "^0 nmcli c modify $U connection.autoconnect yes$" "$LOG")" "1"
 expect "and brings it up as root" "$(grep -c "^0 nmcli --wait 0 c up $U$" "$LOG")" "1"
 reset; as_tester '/usr/lib/moarchy/bin/moarchy-data off' >/dev/null
 expect "off writes the setting as root" "$(grep -c "^0 nmcli c modify $U connection.autoconnect no$" "$LOG")" "1"
 expect "and takes it down as root" "$(grep -c "^0 nmcli c down $U$" "$LOG")" "1"
+expect "and the user's own profile is never what it switches" "$(grep -c "^0 nmcli .*c \(modify\|up\|down\) .*$P" "$LOG")" "0"
+mkdir -p /tmp/evil; printf '#!/bin/sh\necho EVIL >>/tmp/evil.log\n' >/tmp/evil/awk; chmod 755 /tmp/evil/awk
+PATH=/tmp/evil:$PATH /usr/lib/moarchy/bin/moarchy-data off >/dev/null 2>&1
+expect "as root, a caller's PATH finds none of its tools" "$([ -e /tmp/evil.log ] && echo used || echo unused)" "unused"
 reset; as_tester '/usr/lib/moarchy/bin/moarchy-data status' >/dev/null
 expect "status reads as the user, never root" "$(grep -c '^0 ' "$LOG") $(grep -q ' nmcli ' "$LOG" && echo read)" "0 read"
 
@@ -115,8 +125,8 @@ esac"
 out=$(as_tester '/usr/lib/moarchy/bin/moarchy-sim unlock 9999 2>&1'); rc=$?
 expect "a wrong PIN is wrong, with what it cost" "$rc $out" "1 Wrong PIN — 2 attempts left."
 expect "and it was sent as root" "$(grep -c '^0 mmcli -i /org/freedesktop/ModemManager1/SIM/0 --pin=9999$' "$LOG")" "1"
-out=$(as_tester '/usr/lib/moarchy/bin/moarchy-sim unlock 1234 2>&1'); rc=$?
-expect "the right PIN unlocks" "$rc $out" "0 unlocked"
+out=$(as_tester 'printf "1234\n" | /usr/lib/moarchy/bin/moarchy-sim unlock 2>&1'); rc=$?
+expect "the right PIN, on stdin as the keypad sends it, unlocks" "$rc $out" "0 unlocked"
 expect "sudo logged the unlock" "$(grep -c 'COMMAND=/usr/lib/moarchy/bin/moarchy-sim unlock$' /var/log/sudo-test.log)" "2"
 expect "and neither PIN" "$(grep -cE '1234|9999' /var/log/sudo-test.log)" "0"
 printf 'locked 3\n' >"$SIM"
@@ -147,6 +157,44 @@ expect "and the app started in the container as root" "$rc $(grep -c '^0 waydroi
 reset; as_tester '/usr/lib/moarchy/bin/moarchy-android-launch "a;b"' >/dev/null; rc=$?
 expect "a name that is not a package runs nothing" "$rc $(wc -l <"$LOG")" "2 0"
 expect "and --start is not the user's to call" "$(as_tester '/usr/lib/moarchy/bin/moarchy-android-launch --start com.example.app' >/dev/null; echo $?)" "2"
+
+echo "== app drawer removal"
+# A package of one launcher entry, so pacman owns a .desktop the drawer can name.
+mkdir -p /tmp/fp/usr/share/applications
+printf '[Desktop Entry]\nType=Application\nName=Fake\nExec=true\n' >/tmp/fp/usr/share/applications/fakeapp.desktop
+printf 'pkgname = fakeapp\npkgbase = fakeapp\npkgver = 1-1\npkgdesc = test\narch = any\nsize = 1\n' >/tmp/fp/.PKGINFO
+bsdtar -C /tmp/fp -cf /tmp/fakeapp-1-1-any.pkg.tar.zst --zstd .PKGINFO usr
+pacman -U --noconfirm /tmp/fakeapp-1-1-any.pkg.tar.zst >/dev/null 2>&1 || { echo "FAIL: could not install the test package"; exit 1; }
+install -m755 "$REPO/bin/moarchy-app-remove" /usr/lib/moarchy/bin/moarchy-app-remove
+printf '0\n' >/tmp/pkexec.rc; chmod 666 /tmp/pkexec.rc
+stub /usr/bin/pkexec 'exit "$(cat /tmp/pkexec.rc)"'
+reset; out=$(as_tester '/usr/lib/moarchy/bin/moarchy-app-remove remove fakeapp'); rc=$?
+expect "removal asks polkit, for pacman and that one package" "$rc $(grep -c "^$(id -u tester) pkexec /usr/bin/pacman -Rns --noconfirm -- fakeapp$" "$LOG")" "0 1"
+printf '126\n' >/tmp/pkexec.rc
+out=$(as_tester '/usr/lib/moarchy/bin/moarchy-app-remove remove fakeapp'); rc=$?
+expect "a dismissed PIN dialog says so" "$rc $(grep -c 'the PIN was not given' <<<"$out")" "1 1"
+expect "and nothing was removed" "$(pacman -Q fakeapp >/dev/null 2>&1 && echo installed)" "installed"
+printf 'tester ALL=(ALL) NOPASSWD: ALL\n' >/etc/sudoers.d/10-moarchy; chmod 440 /etc/sudoers.d/10-moarchy
+reset; out=$(as_tester '/usr/lib/moarchy/bin/moarchy-app-remove remove fakeapp'); rc=$?
+expect "on a dev image it removes with no dialog" "$rc $(grep -c ' pkexec ' "$LOG") $(pacman -Q fakeapp >/dev/null 2>&1 && echo installed || echo removed)" "0 0 removed"
+rm -f /etc/sudoers.d/10-moarchy
+
+echo "== upgrading a phone flashed with passwordless sudo"
+. "$REPO/pkgbuilds/moarchy/moarchy.install"
+nop() { printf '%s\n' "$1" >/etc/sudoers.d/10-moarchy; chmod 440 /etc/sudoers.d/10-moarchy; }
+left() { _drop_image_nopasswd >/dev/null; [ -e /etc/sudoers.d/10-moarchy ] && echo kept || echo gone; }
+nop 'tester ALL=(ALL) NOPASSWD: ALL'
+expect "the image's line goes once a PIN is set" "$(left)" "gone"
+nop 'tester ALL=(ALL) NOPASSWD: ALL'; touch /etc/moarchy-debug-image
+expect "a dev image keeps it" "$(left)" "kept"
+rm -f /etc/moarchy-debug-image; passwd -l tester >/dev/null
+expect "an account with no PIN yet keeps it, so sudo still has a way in" "$(left)" "kept"
+printf 'tester:246813\n' | chpasswd
+nop $'tester ALL=(ALL) NOPASSWD: ALL\nDefaults:tester !lecture'
+expect "a file edited by hand stays" "$(left)" "kept"
+nop 'tester ALL=(ALL) NOPASSWD: /usr/bin/true'
+expect "so does a rule that is not the image's" "$(left)" "kept"
+rm -f /etc/sudoers.d/10-moarchy
 
 if [[ $fail -gt 0 ]]; then
   echo "$fail failed"

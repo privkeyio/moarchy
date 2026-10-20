@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Launch an Android app so that it actually GETS Android's insets.
 #
 # This replaces `waydroid app launch`, and replacing it is the whole point:
@@ -25,6 +25,9 @@
 # rewrites them on every session start, so anything patched into them converges
 # rather than holds (docs/android.md §7).
 set -euo pipefail
+# Its root half runs with no PIN, so nothing it calls by name is looked up in
+# a directory the caller could have put first, whatever sudo's settings.
+(( EUID == 0 )) && export PATH=/usr/bin
 
 # `--start <pkg>` is the root half below, run through the one sudoers rule
 # that names it (/etc/sudoers.d/moarchy-android-launch); everything else runs

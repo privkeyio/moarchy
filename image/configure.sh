@@ -25,8 +25,8 @@ die() { printf '!! %s\n' "$*" >&2; exit 1; }
 #     upstream's DNS and time zone rules, docs/structure.md I8). Only a dev
 #     image, below, makes sudo passwordless.
 #
-# Setting a real password is `passwd`, and the user can do it from the terminal
-# once the session and its on-screen keyboard are up.
+# The password is the PIN the lock screen asks for on first boot, through
+# moarchy-pin; `passwd` cannot set it (docs/structure.md I8).
 arch-chroot "$ROOTDIR" useradd -m -G wheel,video,audio,input,feedbackd -s /bin/bash "$USER_NAME"
 arch-chroot "$ROOTDIR" passwd -l "$USER_NAME" >/dev/null
 arch-chroot "$ROOTDIR" passwd -l root >/dev/null

@@ -127,7 +127,7 @@ step_deploy() {
   if ! phone 'sudo -n true' 2>/dev/null; then
     info "installing sudoers drop-in (remove later with: sudo rm /etc/sudoers.d/10-moarchy)"
     phone 'echo 123456 | sudo -S -k sh -c "echo \"$(id -un) ALL=(ALL) NOPASSWD: ALL\" > /etc/sudoers.d/10-moarchy && chmod 440 /etc/sudoers.d/10-moarchy && visudo -c -q"' 2>/dev/null ||
-      die "could not enable passwordless sudo (is the password still the default?)"
+      die "could not enable passwordless sudo: the phone asks for a PIN; add the drop-in from its own terminal, or flash a dev image (MOARCHY_SSH_KEY)"
   fi
 
   # Rename migration, one release only. A phone

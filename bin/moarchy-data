@@ -20,6 +20,9 @@ set -uo pipefail
 
 NMCLI=/usr/bin/nmcli
 MMCLI=/usr/bin/mmcli
+# Run as root with no PIN (on, off), so nothing it calls by name is looked up
+# in a directory the caller could have put first, whatever sudo's settings.
+(( EUID == 0 )) && export PATH=/usr/bin
 
 # Only ever reached as root: on and off are run through sudo below.
 _nm_root() { "$NMCLI" "$@" 2>&1; }
@@ -39,9 +42,20 @@ _as_root() { (( EUID == 0 )) || exec sudo -n /usr/lib/moarchy/bin/moarchy-data "
 #
 # The active one wins if there are several, because that is the one carrying
 # the data this is about to turn off.
+#
+# System profiles only: one with connection.permissions set belongs to a
+# user, and any process of the user's can create one. Taking it would let that
+# profile stand in for the real one, so an `off` would leave the real profile
+# coming up at every boot.
 _conn_uuid() {
-  local rows
+  local rows row out=""
   rows=$("$NMCLI" -t -f UUID,TYPE,ACTIVE c show 2>/dev/null | awk -F: '$2=="gsm"')
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    [ -z "$("$NMCLI" -g connection.permissions c show "${row%%:*}" 2>/dev/null)" ] &&
+      out+="$row"$'\n'
+  done <<<"$rows"
+  rows=${out%$'\n'}
   [ -z "$rows" ] && return 1
   printf '%s\n' "$rows" | awk -F: '$3=="yes"{print $1; found=1; exit} END{if(!found) exit 1}' ||
     printf '%s\n' "$rows" | head -1 | cut -d: -f1

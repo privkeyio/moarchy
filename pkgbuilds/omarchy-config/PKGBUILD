@@ -137,7 +137,9 @@ pkgver=${_ver#v}
 #    ask for the PIN for sudo, and Settings runs the DNS presets and the time
 #    zone pages with no terminal, so these are the two upstream already
 #    grants without a password: three DNS presets, and set-timezone with a
-#    zone name (docs/structure.md I8).
+#    zone name (docs/structure.md I8). And upstream's tmpfiles rule that
+#    removes Settings' 15-minute passwordless sudo at boot: its timer is
+#    transient, so a reboot inside the 15 minutes would otherwise keep it.
 pkgrel=10
 pkgdesc="Omarchy's configuration and theme layer, with moarchy's plugins hosted"
 arch=('any')
@@ -349,6 +351,11 @@ package() {
   # set-timezone with an argument shaped like a zone name.
   install -m440 etc/sudoers.d/omarchy-dns "$pkgdir/etc/sudoers.d/omarchy-dns"
   install -m440 etc/sudoers.d/omarchy-tzupdate "$pkgdir/etc/sudoers.d/omarchy-tzupdate"
+  # What ends Settings > Security > Passwordless sudo across a reboot. The
+  # 15 minutes are a transient timer, which a reboot loses; this removes the
+  # grant at boot instead.
+  install -Dm644 etc/tmpfiles.d/omarchy-nopasswd-sudo.conf \
+    "$pkgdir/usr/lib/tmpfiles.d/omarchy-nopasswd-sudo.conf"
 
   # Omarchy's icon font. The bar's logo glyph (\ue900) comes from it, and
   # without it that glyph renders as tofu. /usr/share/fonts is where fontconfig

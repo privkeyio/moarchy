@@ -150,6 +150,11 @@ chmod 440 $W/r/etc/sudoers.d/10-moarchy
 sed -i '/NOPASSWD/s|$|, /usr/bin/nmcli|' $W/r/etc/sudoers.d/30-moarchy-grants
 # 21. passwordless sudo in the package's own /etc/sudoers
 printf '%%wheel ALL=(ALL:ALL) NOPASSWD: ALL\n' >> $W/r/etc/sudoers
+# 23. a sudoers file whose name, split at its space, is two files the image
+#     ships
+printf 'moarchy ALL=(ALL) NOPASSWD: ALL\n' > "$W/r/etc/sudoers.d/20-moarchy-pin 30-moarchy-grants"
+# 24. nothing to end Settings' timed passwordless sudo at boot
+rm -f $W/r/usr/lib/tmpfiles.d/omarchy-nopasswd-sudo.conf
 # 22. a polkit rule that installs store apps with no PIN
 mkdir -p $W/r/etc/polkit-1/rules.d
 printf 'polkit.addRule(function (a, s) { if (a.id == "org.moarchy.store.manage") return polkit.Result.YES; });\n' \
@@ -205,7 +210,10 @@ catches "other sudoers files name moarchy-pin: /etc/sudoers.d/99-planted" \
 catches "sudoers files this image does not ship:.*/etc/sudoers.d/10-moarchy" \
                                         "a dev image's passwordless sudo in a release image"
 catches "sudoers 30-moarchy-grants is not exactly its rules" "a widened tile and keypad grant"
-catches "/etc/sudoers has a rule that skips the PIN" "passwordless sudo in /etc/sudoers"
+catches "/etc/sudoers is not the sudo package's own rules" "passwordless sudo in /etc/sudoers"
+catches "sudoers files this image does not ship:.*/etc/sudoers.d/20-moarchy-pin 30-moarchy-grants" \
+                                        "a sudoers file named for two the image ships"
+catches "nothing removes Settings' timed passwordless sudo at boot" "no boot cleanup for timed passwordless sudo"
 catches "polkit rules grant the store without the PIN: /etc/polkit-1/rules.d/49-planted.rules" \
                                         "a polkit rule granting the store with no PIN"
 

@@ -19,6 +19,9 @@
 set -uo pipefail
 
 MMCLI=/usr/bin/mmcli
+# Run as root with no PIN (unlock), so nothing it calls by name is looked up
+# in a directory the caller could have put first, whatever sudo's settings.
+(( EUID == 0 )) && export PATH=/usr/bin
 
 # Root, for the unlock only. ModemManager's Device.Control action is what
 # --pin goes through, and from the shell's session a polkit prompt would land
@@ -61,7 +64,7 @@ _sim_path() {
 usage() {
   cat <<'EOF'
 moarchy-sim status         what the SIM is doing, as key=value lines
-moarchy-sim unlock <pin>   try a PIN; exit 0 unlocked, 1 wrong, 2 PUK, 3 no modem
+moarchy-sim unlock [pin]   try a PIN, given or on stdin; exit 0 unlocked, 1 wrong, 2 PUK, 3 no modem
 EOF
 }
 
@@ -210,19 +213,17 @@ unlock() {
 case "${1:-}" in
   status) status ;;
   unlock)
-    if [ $# -ge 2 ]; then
-      if (( EUID == 0 )); then unlock "$2"; exit; fi
-      _granted || {
-        echo "This phone has no rule that lets the keypad unlock a SIM." >&2
-        exit 3
-      }
-      printf '%s\n' "$2" | sudo -n /usr/lib/moarchy/bin/moarchy-sim unlock
-      exit
-    fi
-    # As root through the rule: the PIN is the first line of stdin.
-    (( EUID == 0 )) || { usage >&2; exit 64; }
-    IFS= read -r pin || true
-    unlock "${pin:-}"
+    # The PIN as an argument from a shell, or as the first line of stdin, which
+    # is how the keypad sends it and how this passes it on through sudo: an
+    # argument is in /proc for every process on the phone to read.
+    if [ $# -ge 2 ]; then pin=$2; else IFS= read -r pin || true; fi
+    if (( EUID == 0 )); then unlock "${pin:-}"; exit; fi
+    _granted || {
+      echo "This phone has no rule that lets the keypad unlock a SIM." >&2
+      exit 3
+    }
+    printf '%s\n' "${pin:-}" | sudo -n /usr/lib/moarchy/bin/moarchy-sim unlock
+    exit
     ;;
   -h|--help|help) usage ;;
   *) usage >&2; exit 64 ;;

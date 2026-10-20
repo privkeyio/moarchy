@@ -157,7 +157,6 @@ Item {
     if (root.busy || !root.locked) return
     if (root.pin.length < 4) { root.errorText = "A PIN is at least 4 digits"; return }
     root.busy = true
-    unlockProc.command = [root.simTool, "unlock", root.pin]
     unlockProc.running = true
   }
 
@@ -193,9 +192,17 @@ Item {
     }
   }
 
+  // The PIN goes in on stdin and the pipe is closed behind it, as the lock
+  // screen sends its own: an argument is readable in /proc by every process.
   Process {
     id: unlockProc
+    command: [root.simTool, "unlock"]
+    stdinEnabled: true
     stdout: StdioCollector {}
+    onStarted: {
+      unlockProc.write(root.pin + "\n")
+      unlockProc.stdinEnabled = false
+    }
     stderr: StdioCollector {
       onStreamFinished: root.errorText = text.trim()
     }
@@ -205,6 +212,7 @@ Item {
     // when the answer is yes. An exit code here would be a second source of
     // truth for the same fact, and the one that goes stale.
     onExited: {
+      unlockProc.stdinEnabled = true
       root.busy = false
       root.pin = ""
       root.refresh()

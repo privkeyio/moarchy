@@ -103,10 +103,12 @@ say "authorized_keys: $added added, $already already there ($AUTH)"
 # that), so a key alone is not enough after a reflash.
 if systemctl is-enabled --quiet sshd 2>/dev/null && systemctl is-active --quiet sshd 2>/dev/null; then
   info "sshd already enabled and running"
-elif sudo -n systemctl enable --now sshd >/dev/null 2>&1; then
+# Plain sudo, which asks for the PIN on the terminal (even under curl | sh,
+# from /dev/tty); a dev image's passwordless sudo asks nothing.
+elif sudo systemctl enable --now sshd >/dev/null; then
   info "sshd enabled and started"
 else
-  printf '\033[33m   could not start sshd non-interactively; run: sudo systemctl enable --now sshd\033[0m\n'
+  printf '\033[33m   could not start sshd; run: sudo systemctl enable --now sshd\033[0m\n'
 fi
 
 # --- how to get in ----------------------------------------------------------

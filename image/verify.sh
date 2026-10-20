@@ -541,20 +541,49 @@ if [ "${DEV_IMAGE:-0}" = 1 ]; then
   _want_rules 10-moarchy 'moarchy ALL=(ALL) NOPASSWD: ALL'
   _known="$_known 10-moarchy"
 fi
+# By whole name: a file called "20-moarchy-pin 30-moarchy-grants" is one sudo
+# reads, and no list match may take it for two it knows.
 _extra=$(for f in "$R"/etc/sudoers.d/*; do [ -e "$f" ] || continue
-           case " $_known " in *" $(basename "$f") "*) ;; *) printf '%s ' "${f#$R}" ;; esac; done)
+           printf '%s\n' $_known | grep -qxF -- "$(basename "$f")" || printf '%s ' "${f#$R}"; done)
 [ -z "$_extra" ] && ok "no sudoers file this image does not ship" \
                  || no "sudoers files this image does not ship: $_extra"
-# The package's /etc/sudoers: no rule in it skips the PIN, and it reads no
-# directory but sudoers.d.
-_main=$(_rules "$R/etc/sudoers" 2>/dev/null)
-if grep -qE 'NOPASSWD|!authenticate' <<<"$_main"; then
-  no "/etc/sudoers has a rule that skips the PIN"
-elif [ "$(grep -E '^[@#]include' <<<"$_main")" != "@includedir /etc/sudoers.d" ]; then
-  no "/etc/sudoers includes something other than /etc/sudoers.d: $(grep -E '^[@#]include' <<<"$_main" | tr '\n' ' ')"
-else
-  ok "/etc/sudoers skips the PIN for nothing and reads only sudoers.d"
-fi
+# The sudo package's own /etc/sudoers and sudo.conf, rule for rule (sudo
+# 1.9.17-6 on Arch Linux ARM): no rule there skips the PIN, secure_path keeps
+# the caller's PATH out of what root runs, it reads no directory but
+# sudoers.d, and sudo.conf names no other policy or file. A sudo upgrade that
+# changes them fails here, to be read before this list moves.
+_main_want='Defaults!/usr/bin/visudo env_keep += "SUDO_EDITOR EDITOR VISUAL"
+Defaults secure_path="/usr/local/sbin:/usr/local/bin:/usr/bin"
+root ALL=(ALL:ALL) ALL
+@includedir /etc/sudoers.d'
+[ "$(_rules "$R/etc/sudoers" 2>/dev/null)" = "$_main_want" ] \
+  && ok "/etc/sudoers is the sudo package's own, rule for rule" \
+  || no "/etc/sudoers is not the sudo package's own rules: $(_rules "$R/etc/sudoers" 2>/dev/null | tr '\n' '|')"
+[ -z "$(_rules "$R/etc/sudo.conf" 2>/dev/null)" ] \
+  && ok "sudo.conf sets nothing, so sudo reads /etc/sudoers" \
+  || no "sudo.conf sets something: $(_rules "$R/etc/sudo.conf" | tr '\n' '|')"
+grep -qE '^[[:space:]]*sudoers[[:space:]]*:' "$R/etc/nsswitch.conf" 2>/dev/null &&
+  no "nsswitch.conf gives sudo another source of rules" || ok "nsswitch.conf gives sudo no other source of rules"
+# What each no-PIN rule runs, and the directories it is in: root's to write
+# alone, or the rule hands root to whoever can rewrite it.
+_tgt_bad=""
+for t in /usr/lib/moarchy/bin/moarchy-data /usr/lib/moarchy/bin/moarchy-sim /usr/bin/omarchy-dns \
+         /usr/bin/timedatectl /usr/bin/omarchy-theme-set-browser-policy /usr/lib/moarchy/bin/moarchy-android-launch; do
+  [ -e "$R$t" ] || { [ "$t" = /usr/lib/moarchy/bin/moarchy-android-launch ] && continue; _tgt_bad="$_tgt_bad $t(missing)"; continue; }
+  p=$t
+  while [ "$p" != / ]; do
+    if [ -L "$R$p" ]; then _tgt_bad="$_tgt_bad $p(link)"
+    elif [ "$(stat -c %u "$R$p")" != 0 ] || [ $(( 0$(stat -c %a "$R$p") & 022 )) != 0 ]; then _tgt_bad="$_tgt_bad $p"; fi
+    p=$(dirname "$p")
+  done
+done
+[ -z "$_tgt_bad" ] && ok "every command a no-PIN rule runs is root's alone to change" \
+                   || no "a no-PIN rule runs something others can change:$_tgt_bad"
+# The 15-minute passwordless sudo Settings offers ends at boot as well, since
+# its timer does not survive one.
+grep -qx 'r! /etc/sudoers.d/99-omarchy-nopasswd-\*' "$R/usr/lib/tmpfiles.d/omarchy-nopasswd-sudo.conf" 2>/dev/null \
+  && ok "boot removes a timed passwordless sudo left by a reboot" \
+  || no "nothing removes Settings' timed passwordless sudo at boot -- a reboot inside it keeps it"
 # The store asks for the PIN, as its own policy says: no rule may answer yes
 # for it.
 _store=$(grep -ls 'store.manage' "$R"/usr/share/polkit-1/rules.d/* "$R"/etc/polkit-1/rules.d/* 2>/dev/null | sed "s|^$R||" | tr '\n' ' ')

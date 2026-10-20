@@ -9,7 +9,7 @@
 #
 # post_upgrade only. post_install runs inside pacstrap, where the keyring is the
 # build's own and is still needed for the rest of the image build.
-post_upgrade() {
+_replace_image_keyring() {
   local dir=/etc/pacman.d/gnupg mark=/var/lib/moarchy/pacman-keyring-generated
   [ -d "$dir" ] && [ ! -e "$mark" ] || return 0
   # Its agent would otherwise keep the shared secret key in memory.
@@ -21,4 +21,25 @@ post_upgrade() {
   # and starting an active unit does nothing.
   systemctl restart --no-block moarchy-pacman-init.service 2>/dev/null ||
     echo "    Reboot to finish: the new keyring is generated at the next boot."
+}
+
+# Passwordless sudo, which every image before 0.5.0-12 wrote for its account
+# (docs/structure.md I8). No package owns the file, so an upgrade alone would
+# keep it. It goes only when it is exactly the one line those images wrote,
+# the phone is not a dev image, and the account already has its PIN, so sudo
+# is never left with no way in. A file edited by hand stays.
+_drop_image_nopasswd() {
+  local f=/etc/sudoers.d/10-moarchy user
+  [ -f "$f" ] && [ ! -e /etc/moarchy-debug-image ] || return 0
+  [ "$(wc -l <"$f")" = 1 ] || return 0
+  user=$(sed -n 's/^\([a-z_][a-z0-9_-]*\) ALL=(ALL) NOPASSWD: ALL$/\1/p' "$f")
+  [ -n "$user" ] || return 0
+  [ "$(passwd -S "$user" 2>/dev/null | awk '{print $2}')" = P ] || return 0
+  rm -f "$f"
+  echo "==> moarchy: sudo asks for your PIN now; the image's passwordless sudo is gone"
+}
+
+post_upgrade() {
+  _drop_image_nopasswd
+  _replace_image_keyring
 }

@@ -344,8 +344,9 @@ cmd_remove() {
         out="$(pkexec "${argv[@]}" 2>&1)"
       fi
       rc=$?
-      # pkexec's own word for a dismissed dialog or a refused PIN.
-      (( rc == 126 || rc == 127 )) && out="Not removed: the PIN was not given"
+      # 126 is pkexec's word for a dismissed dialog. A refused PIN, or no
+      # dialog at all, is 127, and pkexec's own line says which.
+      (( rc == 126 )) && out="Not removed: the PIN was not given"
       ;;
     webapp)
       # Upstream's, because it takes the icon as well as the entry, and it
