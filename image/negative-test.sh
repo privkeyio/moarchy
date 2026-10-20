@@ -129,7 +129,9 @@ mkdir -p $W/r/etc/ssh/sshd_config.d
 printf 'ListenAddress 10.66.0.2\n' > $W/r/etc/ssh/sshd_config.d/20-moarchy-usbnet.conf
 # 13. the lock screen's sudo rule widened to any argument, which is root for
 #     anyone holding the phone: `moarchy-pin set` with no PIN asked
-sed -i 's|moarchy-pin first$|moarchy-pin *|' $W/r/etc/sudoers.d/20-moarchy-pin
+# Appended, not substituted: a substitution that stops matching when the rule
+# changes plants nothing, and the miss reads as a blind verifier.
+sed -i 's|$|, /usr/lib/moarchy/bin/moarchy-pin set|' $W/r/etc/sudoers.d/20-moarchy-pin
 # 14. su setuid again, an uncounted way to guess the PIN
 chmod 4755 $W/r/usr/bin/su
 # 15. upstream's PAM service, which arms upstream's lock beside ours
