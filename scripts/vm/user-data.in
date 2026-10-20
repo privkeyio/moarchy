@@ -1,0 +1,43 @@
+#cloud-config
+# The build VM's first boot (scripts/vm/vm.sh setup fills in the @...@ keys).
+users:
+  - name: builder
+    shell: /bin/bash
+    lock_passwd: true
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    ssh_authorized_keys:
+      - @CLIENT_PUB@
+disable_root: true
+ssh_pwauth: false
+ssh_deletekeys: true
+# The host key vm.sh made and already pinned, so the first connection is
+# checked like every other.
+ssh_keys:
+  ed25519_private: |
+@HOST_PRIV@
+  ed25519_public: @HOST_PUB@
+write_files:
+  # Loop devices created on demand never appear inside a privileged container's
+  # /dev, so verify.sh's loop mount fails; eight fixed ones exist from boot.
+  - path: /etc/modprobe.d/loop.conf
+    content: "options loop max_loop=8\n"
+  # max_loop only acts when the module loads, so load it at boot.
+  - path: /etc/modules-load.d/loop.conf
+    content: "loop\n"
+power_state:
+  mode: reboot
+  condition: true
+package_update: true
+packages:
+  - docker
+  - qemu-user-static
+  - qemu-user-static-binfmt
+  - git
+runcmd:
+  # The C flag: an emulated setuid binary (sudo, inside the arm64 image
+  # container) runs with its own credentials rather than the caller's.
+  - sed 's/:FP$/:FPC/' /usr/lib/binfmt.d/qemu-aarch64-static.conf > /etc/binfmt.d/qemu-aarch64-static.conf
+  - systemctl restart systemd-binfmt
+  - usermod -aG docker builder
+  - systemctl enable --now docker
+  - touch /var/lib/moarchy-build-ready

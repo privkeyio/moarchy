@@ -462,6 +462,27 @@ tag    = "base-devel"
 digest = "sha256:f7c6f64c0f246f41775e01793340c49f8e9abf3991141c25405361d56b100ccb"
 
 # ---------------------------------------------------------------------------
+# The build VM's base image (scripts/vm, docs/build-vm.md): Arch Linux's
+# official x86_64 cloud image, from arch-boxes. Pinned by release and sha256,
+# and checked against the signature the release carries.
+#
+# signing-key is arch-boxes' CI key, as its README on gitlab.archlinux.org
+# publishes it ("Every release is signed by our CI with the following key").
+# That README is the key's only home: it is self-signed, not in the pacman
+# keyring, and not on keys.openpgp.org or WKD (all checked 2026-10-19). The
+# key block itself is stored beside the scripts, so fetching the image trusts
+# nothing fetched with it.
+#
+# To move: pick a release under base-url, take its .SHA256, check the .sig
+# against scripts/vm/arch-boxes.asc, and change version and sha256 together.
+# ---------------------------------------------------------------------------
+[build-vm]
+base-url    = "https://geo.mirror.pkgbuild.com/images"
+version     = "20261015.611680"
+sha256      = "08754e28d91b1680086c6211ef4df13559e766fff7cdb4006489b14b5d281f08"
+signing-key = "1B9A16984A4E8CB448712D2AE0B78BF4326C6F8F"
+
+# ---------------------------------------------------------------------------
 # Google Pixel 3a (sargo), SDM670 -- the second device (docs/devices.md D13).
 #
 # This section is the whole reason structure.md §2's "not a distribution"
