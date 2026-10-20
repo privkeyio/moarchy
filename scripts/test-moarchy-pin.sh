@@ -39,8 +39,12 @@ print(lc.crypt(sys.stdin.readline().strip().encode(), lc.crypt_gensalt(b"$y$", 5
 }
 printf '%s:%s:20000:0:99999:7:::\n' "$U" "$(hash 246813)" >"$WORK/shadow"
 # The user in wheel, whatever the host calls its admin group.
+# At a gid no other group in the file has: `id -nG` names each gid by the
+# first group holding it, so a wheel sharing one with, say, docker would read
+# back as docker (as it did on the CI runner).
 grep -v '^wheel:' /etc/group >"$WORK/group"
-printf 'wheel:x:998:%s\n' "$U" >>"$WORK/group"
+wgid=$(awk -F: '{u[$3]=1} END {for (g = 60000; g in u; g++); print g}' "$WORK/group")
+printf 'wheel:x:%s:%s\n' "$wgid" "$U" >>"$WORK/group"
 cat >"$WORK/stub/chpasswd" <<E
 #!/bin/bash
 cat >"$WORK/chpasswd.in"
