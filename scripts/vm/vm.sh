@@ -77,7 +77,8 @@ on_exit() { CLEANUP="$CLEANUP; $1"; trap "$CLEANUP" EXIT; }
 # What the guest prints, with the terminal's control sequences taken out: a
 # build log carries upstream builds' output, and an escape sequence in it
 # should not reach your terminal (titles, clipboard, hyperlinks).
-clean() { sed -u 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/\x1b[]P^_][^\x07\x1b]*\(\x07\|\x1b\\\)//g; s/[\x00-\x08\x0b-\x1f\x7f]//g'; }
+# Bytes, not characters: in a UTF-8 locale sed rejects the byte range below.
+clean() { LC_ALL=C sed -u 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/\x1b[]P^_][^\x07\x1b]*\(\x07\|\x1b\\\)//g; s/[\x00-\x08\x0b-\x1f\x7f]//g'; }
 
 fetch_base() {
   local version sha key url f tmp g st
