@@ -93,11 +93,15 @@ run() {
       --bind "$PY" "$PYDEST" \
       --unshare-user --uid 0 --gid 0 env -i "${ENVV[@]}" "${WRAP[@]}" "$HELPER" "$1" 2>"$WORK/err")
   else
+    # The stubs are layered over /usr/bin rather than bound onto files there:
+    # the helper looks in /usr/bin alone, and a distribution that keeps
+    # chpasswd in /usr/sbin (Ubuntu, the CI runner) has no file to bind onto.
     out=$(printf '%s' "$2" | sudo -n unshare -m --propagation private bash -c '
       w=$1 py=$2 dest=$3; shift 3
+      mkdir -p "$w/layer" && cp "$w/stub/chpasswd" "$w/stub/passwd" "$w/layer/" &&
       mount --bind "$w/shadow" /etc/shadow && mount --bind "$w/group" /etc/group &&
       mount --bind "$w/varlib" /var/lib &&
-      mount --bind "$w/stub/chpasswd" /usr/bin/chpasswd && mount --bind "$w/stub/passwd" /usr/bin/passwd &&
+      mount -t overlay overlay -o "lowerdir=$w/layer:/usr/bin" /usr/bin &&
       mount --bind "$py" "$dest" && exec env -i "$@"' \
       bash "$WORK" "$PY" "$PYDEST" "${ENVV[@]}" "${WRAP[@]}" "$HELPER" "$1" 2>"$WORK/err")
   fi

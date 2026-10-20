@@ -131,7 +131,7 @@ pambase | sed "s|^auth\s*\[success=1 default=bad\]\s*pam_unix.so.*$|$OLDER|" >"$
 expect "an older release's line becomes this one" "$(run) $(grep -cxF "$LINE" "$WORK/pam.d/system-auth")" "rc=0 out= 1"
 pambase | sed "s|^auth\s*\[success=1 default=bad\]\s*pam_unix.so.*$|$OLDER|" >"$WORK/pam.d/system-auth"
 expect "and --undo takes an older line out too" "$(run --undo) $(diff <(pambase) "$WORK/pam.d/system-auth" >/dev/null && echo pambase)" "rc=0 out= pambase"
-[[ -n $LINE && ${#BINS[@]} -ge 5 ]] && printf '  PASS  %s\n' "LINE and CHECKERS are read from the script" \
+[[ -n $LINE && $(sed -n "s/^CHECKERS='\(.*\)'$/\1/p" "$HARDEN" | wc -w) -eq 6 ]] && printf '  PASS  %s\n' "LINE and CHECKERS are read from the script" \
   || { printf '  FAIL  %s\n' "LINE or CHECKERS could not be read from the script"; fail=$((fail + 1)); }
 
 if [[ $fail -gt 0 ]]; then
