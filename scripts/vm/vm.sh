@@ -114,7 +114,7 @@ clean() {
 }
 
 fetch_base() {
-  local version sha key url f tmp g st
+  local version sha key url f tmp g st info
   version=$(manifest_get build-vm version) || exit 1
   sha=$(manifest_get build-vm sha256) || exit 1
   key=$(manifest_get build-vm signing-key) || exit 1
@@ -128,8 +128,8 @@ fetch_base() {
   curl -fsSL --proto '=https' --max-filesize 64K --max-time 60 -o "$tmp/$f.sig" "$url/$f.sig"
   echo "$sha  $tmp/$f" | sha256sum -c --quiet - || die "$f does not match the pinned sha256"
   # A qcow2 can name other files to read; the base must be the whole disk.
-  qemu-img info -U --output=json "$tmp/$f" | grep -qE '"(backing-filename|data-file)"' &&
-    die "$f refers to another file"
+  info=$(qemu-img info -U --output=json "$tmp/$f") || die "$f: qemu-img cannot read it"
+  grep -qE '"(backing-filename|data-file)"' <<<"$info" && die "$f refers to another file"
   # The key from the repo, in a keyring of its own. A good, unexpired,
   # unrevoked signature, by exactly the pinned key: VALIDSIG's last field is
   # the primary key's fingerprint, whichever subkey signed. The sha256 above
@@ -397,10 +397,11 @@ stop() {
     # The connection drops as the guest shuts down, so ssh's exit status says
     # nothing; only a guest still running after the wait is killed.
     gssh 'sync; sudo systemctl poweroff' 2>/dev/null || true
+    # Each signal only while the pid is still that QEMU, not a reused number.
     for _ in $(seq 60); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
-    kill "$pid" 2>/dev/null || true
+    pid_of "$D/run/qemu.pid" qemu-system >/dev/null && kill "$pid" 2>/dev/null
     for _ in $(seq 10); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
-    kill -9 "$pid" 2>/dev/null || true
+    pid_of "$D/run/qemu.pid" qemu-system >/dev/null && kill -9 "$pid" 2>/dev/null
     for _ in $(seq 10); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
     # Its pidfile kept while it lives, so nothing starts another beside it.
     kill -0 "$pid" 2>/dev/null && die "QEMU ($pid) did not exit"
