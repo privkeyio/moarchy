@@ -33,7 +33,10 @@ VM=$REPO/scripts/vm
 D=${MOARCHY_VM_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/moarchy-build-vm}
 . "$REPO/scripts/manifest.sh"
 
-CPUS=${VM_CPUS:-$(nproc)}
+# At most 16, and QEMU at nice 10 (start below): every thread of the host held
+# the desktop at a load of 88 for the length of a build. A build takes a little
+# longer; the machine stays usable.
+CPUS=${VM_CPUS:-$(( $(nproc) < 16 ? $(nproc) : 16 ))}
 # 12G: the largest build container measured so far peaked at 2.4G. The balloon
 # hands pages the guest frees back to the host instead of holding them.
 MEM=${VM_MEM:-12G}
@@ -163,7 +166,7 @@ start() {
   # QEMU under its own seccomp filter: no new privileges, no spawning, none of
   # the obsolete syscalls. Started in the background from here rather than with
   # -daemonize, which the filter's spawn=deny rules out.
-  setsid -f qemu-system-x86_64 -enable-kvm -cpu host -smp "$CPUS" -m "$MEM" -nographic \
+  setsid -f nice -n 10 qemu-system-x86_64 -enable-kvm -cpu host -smp "$CPUS" -m "$MEM" -nographic \
     -sandbox on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny \
     -device virtio-balloon-pci,free-page-reporting=on \
     -drive file="$OVL",if=virtio,format=qcow2 "${seed[@]}" \

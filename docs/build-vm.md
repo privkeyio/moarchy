@@ -23,7 +23,7 @@ The images land in `~/.local/share/moarchy-build-vm/out/<commit>-<time>.<id>/{re
 
 The steps also run one at a time, to look around in a VM: `setup`, `start`, `wait`, `check-isolation`, `ssh`, `stop`, `destroy`. `VM_REUSE=1 vm.sh build ...` builds in the VM that is already running, with its kernel cache, which is faster and trusts every ref built in that VM since its last `setup`.
 
-Everything the VM keeps (its base image, keys, disk and output) is under `$MOARCHY_VM_DIR`, by default `~/.local/share/moarchy-build-vm`, mode 0700, and never in the repo. `VM_CPUS`, `VM_MEM`, `VM_DISK`, `VM_PORT` and `VM_DNS` override the defaults at the top of `vm.sh`.
+Everything the VM keeps (its base image, keys, disk and output) is under `$MOARCHY_VM_DIR`, by default `~/.local/share/moarchy-build-vm`, mode 0700, and never in the repo. `VM_CPUS`, `VM_MEM`, `VM_DISK`, `VM_PORT` and `VM_DNS` override the defaults at the top of `vm.sh`. By default the VM gets at most 16 CPUs and QEMU runs at nice 10, so a build leaves the rest of the machine usable.
 
 What goes in is a git bundle of the commit, which carries the history behind it too, unpushed commits included, and the public key if you gave one.
 
