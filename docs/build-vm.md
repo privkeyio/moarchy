@@ -36,7 +36,7 @@ What goes in is a git bundle of the commit, which carries the history behind it 
 - **QEMU and passt run as you.** passt sandboxes itself; QEMU runs under its own seccomp filter (`-sandbox on`, no new privileges, no spawning, no obsolete syscalls). An escape from the VM would still be code running as your user.
 - **SSH into the guest is pinned.** Every `setup` makes a new host key on your side and hands it over in the seed, which is deleted once first boot has used it, so the first connection is already checked. A dedicated client key is the only one ever offered, and nothing prompts.
 - **No shared directory, socket or device.** Nothing is mounted into the guest, and the only port forward is SSH, on `127.0.0.1`.
-- **What the guest prints is cleaned** of terminal control sequences before it reaches your terminal.
+- **What the guest prints through `vm.sh` is cleaned** of terminal control sequences before it reaches your terminal, and no terminal input reaches the guest. Two things are raw: a `vm.sh ssh` session, and `run/console.log`, the guest's serial console (kept to its first 64M). Read the log with `less`, which shows control characters rather than sending them to the terminal, not with `cat`.
 
 ## The base image
 

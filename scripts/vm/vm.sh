@@ -31,6 +31,8 @@ umask 077
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 VM=$REPO/scripts/vm
 D=${MOARCHY_VM_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/moarchy-build-vm}
+# ssh splits UserKnownHostsFile at spaces, and QEMU's -drive at commas.
+[[ $D == *[[:space:],]* ]] && { echo "${0##*/}: $D: no spaces or commas in the state path" >&2; exit 1; }
 . "$REPO/scripts/manifest.sh"
 
 # At most 16, and QEMU at nice 10 (start below): every thread of the host held
@@ -66,9 +68,11 @@ ssh_opts=(-F /dev/null -o BatchMode=yes
           -o HostKeyAlgorithms=ssh-ed25519
           -o IdentitiesOnly=yes -o IdentityFile="$D/keys/client_ed25519"
           -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=5 -p "$PORT")
-# The guest's stderr cleaned too: a guest-written ~/.bashrc, or a replaced
-# tail, can print to either.
-gssh() { ssh "${ssh_opts[@]}" builder@127.0.0.1 "$@" 2> >(clean >&2); }
+# Both of the guest's streams cleaned: a guest-written ~/.bashrc, or a
+# replaced tail, can print to either. No terminal input reaches it; gput is
+# the one that sends stdin, for the files that go in.
+gssh() { ssh -n "${ssh_opts[@]}" builder@127.0.0.1 "$@" 2> >(clean >&2) | clean; }
+gput() { ssh "${ssh_opts[@]}" builder@127.0.0.1 "$@" 2> >(clean >&2) | clean; }
 
 # The pid a pidfile names, only while it is still that program: pidfiles here
 # outlive a host reboot or a killed QEMU, and the number may since have gone to
@@ -101,7 +105,13 @@ trap 'exit 143' TERM HUP
 # build log carries upstream builds' output, and an escape sequence in it
 # should not reach your terminal (titles, clipboard, hyperlinks).
 # Bytes, not characters: in a UTF-8 locale sed rejects the byte range below.
-clean() { LC_ALL=C sed -u 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/\x1b[]P^_][^\x07\x1b]*\(\x07\|\x1b\\\)//g; s/[\x00-\x08\x0b-\x1f\x7f]//g; s/\xc2[\x80-\x9f]//g'; }
+# Lines folded at 4K first, so a guest cannot grow one line without end in
+# sed's buffer; a sequence cut in two loses its ESC like any other. The
+# UTF-8 C1 controls are replaced, not deleted, so two halves cannot join up.
+clean() {
+  LC_ALL=C stdbuf -oL fold -b -w 4096 |
+    LC_ALL=C sed -u 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/\x1b[]P^_][^\x07\x1b]*\(\x07\|\x1b\\\)//g; s/[\x00-\x08\x0b-\x1f\x7f]//g; s/\xc2[\x80-\x9f]/?/g'
+}
 
 fetch_base() {
   local version sha key url f tmp g st
@@ -117,6 +127,9 @@ fetch_base() {
   curl -fL --progress-bar --proto '=https' --max-filesize 4G --max-time 3600 -o "$tmp/$f" "$url/$f"
   curl -fsSL --proto '=https' --max-filesize 64K --max-time 60 -o "$tmp/$f.sig" "$url/$f.sig"
   echo "$sha  $tmp/$f" | sha256sum -c --quiet - || die "$f does not match the pinned sha256"
+  # A qcow2 can name other files to read; the base must be the whole disk.
+  qemu-img info -U --output=json "$tmp/$f" | grep -qE '"(backing-filename|data-file)"' &&
+    die "$f refers to another file"
   # The key from the repo, in a keyring of its own. A good, unexpired,
   # unrevoked signature, by exactly the pinned key: VALIDSIG's last field is
   # the primary key's fingerprint, whichever subkey signed. The sha256 above
@@ -185,15 +198,20 @@ start() {
   on_exit "running || kill_passt"
   # QEMU under its own seccomp filter: no new privileges, no spawning, none of
   # the obsolete syscalls. Started in the background from here rather than with
-  # -daemonize, which the filter's spawn=deny rules out.
-  setsid -f nice -n 10 qemu-system-x86_64 -enable-kvm -cpu host -smp "$CPUS" -m "$MEM" -nographic \
+  # -daemonize, which the filter's spawn=deny rules out. The console is the
+  # guest's to write, so it is kept to its first 64M and the rest drained.
+  # Not holding build's lock (fd 8), which would outlive a stray QEMU.
+  setsid -f bash -c 'log=$1 console=$2; shift 2
+    nice -n 10 "$@" </dev/null 2>>"$log" | { head -c $((64 << 20)); cat >/dev/null; } >"$console"' \
+    _ "$D/run/qemu.log" "$D/run/console.log" \
+    qemu-system-x86_64 -enable-kvm -cpu host -smp "$CPUS" -m "$MEM" \
     -sandbox on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny \
     -device virtio-balloon-pci,free-page-reporting=on \
     -drive file="$OVL",if=virtio,format=qcow2 "${seed[@]}" \
     -netdev stream,id=n0,server=off,addr.type=unix,addr.path="$SOCK" \
     -device virtio-net-pci,netdev=n0 \
-    -nodefaults -serial file:"$D/run/console.log" -display none \
-    -pidfile "$D/run/qemu.pid" </dev/null >>"$D/run/qemu.log" 2>&1
+    -nodefaults -serial stdio -display none \
+    -pidfile "$D/run/qemu.pid" </dev/null >/dev/null 2>&1 8>&-
   for _ in $(seq 20); do running && break; sleep 0.5; done
   running || die "QEMU did not start; see $D/run/qemu.log"
   echo "started; console: $D/run/console.log"
@@ -238,14 +256,18 @@ class H(http.server.BaseHTTPRequestHandler):
         self.send_response(200); self.end_headers(); self.wfile.write(token)
     def log_message(self, *a): pass
 class S6(http.server.HTTPServer): address_family = socket.AF_INET6
-servers = [http.server.HTTPServer(("127.0.0.1", port), H), S6(("::1", port), H)]
+servers = [http.server.HTTPServer(("127.0.0.1", port), H)]
+try: servers.append(S6(("::1", port), H))
+except OSError: pass  # a host without IPv6 has no ::1 to reach
 for s in servers: threading.Thread(target=s.serve_forever, daemon=True).start()
 threading.Event().wait()
 ' "$port" "$token" "$log" & pid=$!
   on_exit "kill $pid 2>/dev/null; rm -f $(q "$log")"
   sleep 1
-  curl -fsS "http://127.0.0.1:$port/" | grep -q "$token" && curl -fsS -g "http://[::1]:$port/" | grep -q "$token" ||
-    die "the test listeners did not come up"
+  curl -fsS "http://127.0.0.1:$port/" | grep -q "$token" || die "the test listener did not come up"
+  if ip -6 addr show dev lo 2>/dev/null | grep -q 'inet6 ::1/'; then
+    curl -fsS -g "http://[::1]:$port/" | grep -q "$token" || die "the IPv6 test listener did not come up"
+  fi
   : >"$log"
   # curl's own exit code beside each, so a refused or timed-out connection (7,
   # 28) can be told from a URL that was never usable (3), which proves nothing.
@@ -256,7 +278,7 @@ threading.Event().wait()
     for a in 10.0.2.2 \${gw6:+[\$gw6%\$dev6]}; do
       curl -fsS -g --max-time 4 -o /dev/null http://\$a:$port/ 2>/dev/null; echo \"guest probe \$a: curl exit \$?\"
     done
-    curl -fsS --max-time 15 -o /dev/null -w 'outbound https %{http_code}\n' https://archlinux.org/" | clean || true)
+    curl -fsS --max-time 15 -o /dev/null -w 'outbound https %{http_code}\n' https://archlinux.org/" | head -c 4096 || true)
   echo "$out"
   [ -s "$log" ] && die "the host's loopback listener was reached from the guest ($(tr '\n' ' ' <"$log"))"
   grep -q 'outbound https 200' <<<"$out" || die "the guest has no working network; the check above proves nothing"
@@ -272,7 +294,7 @@ threading.Event().wait()
 # path, a symlink, a pipe or a device, only its contents arrive, as a regular
 # file of at most $3 bytes.
 fetch_file() {
-  gssh "cat ~/out/$1" | head -c "$3" >"$2" || true
+  ssh -n "${ssh_opts[@]}" builder@127.0.0.1 "cat ~/out/$1" 2> >(clean >&2) | head -c "$3" >"$2" || true
 }
 
 # The three images and their SHA256SUMS, and nothing else: SHA256SUMS must
@@ -308,8 +330,9 @@ build() {
   else
     running && die "a VM is running; stop it first, or build in it with VM_REUSE=1"
     setup
-    start
+    # Before start, so a Ctrl-C while it waits for QEMU stops that QEMU too.
     on_exit "$(q "$0") stop >/dev/null 2>&1"
+    start
     wait_ready
     check_isolation
   fi
@@ -324,13 +347,13 @@ build() {
   # The last build's log, result and images gone too, or a ref that never got
   # as far as starting its log would be judged on the previous one's.
   gssh 'rm -rf ~/in ~/out ~/build.log ~/build.pid && mkdir -p ~/in'
-  gssh 'cat > ~/in/moarchy.bundle' <"$bundle"
+  gput 'cat > ~/in/moarchy.bundle' <"$bundle"
   # The ref's own build script, not this checkout's: a ref is built the way it
   # says it is built.
   git -C "$REPO" show "$sha:scripts/vm/in-vm-build.sh" >/dev/null 2>&1 ||
     die "$ref has no scripts/vm/in-vm-build.sh; it predates the build VM"
-  git -C "$REPO" show "$sha:scripts/vm/in-vm-build.sh" | gssh 'cat > ~/in-vm-build.sh && chmod +x ~/in-vm-build.sh'
-  if [ -n "$key" ]; then gssh 'cat > ~/in/dev.pub' <"$key"; fi
+  git -C "$REPO" show "$sha:scripts/vm/in-vm-build.sh" | gput 'cat > ~/in-vm-build.sh && chmod +x ~/in-vm-build.sh'
+  if [ -n "$key" ]; then gput 'cat > ~/in/dev.pub' <"$key"; fi
   # Detached in the guest, so a dropped connection does not end the build. The
   # log is followed until the build has exited, and followed again if the
   # connection drops first: the verdict is only read once there is one.
@@ -339,19 +362,19 @@ build() {
   # if it is a number, and a failed connection is a retry, not an exit.
   local from=1 state n
   while :; do
-    state=$(gssh 'kill -0 "$(cat ~/build.pid)" 2>/dev/null && echo running || echo done' || true)
+    state=$(gssh 'kill -0 "$(cat ~/build.pid)" 2>/dev/null && echo running || echo done' | head -c 64 || true)
     [ "$state" = done ] && break
     if [ "$state" = running ]; then
-      gssh "sleep 2; tail -n +$from --pid=\"\$(cat ~/build.pid)\" -f ~/build.log" | clean || true
+      gssh "sleep 2; tail -n +$from --pid=\"\$(cat ~/build.pid)\" -f ~/build.log" || true
     else
       running || die "the VM stopped during the build; see $D/run/console.log"
       sleep 5
     fi
-    n=$(gssh 'wc -l < ~/build.log' || true)
-    [[ $n =~ ^[0-9]+$ ]] && from=$(( n + 1 ))
+    n=$(gssh 'wc -l < ~/build.log' | head -c 64 || true)
+    [[ $n =~ ^[0-9]{1,15}$ ]] && from=$(( 10#$n + 1 ))
   done
-  gssh "tail -n +$from ~/build.log" | clean || true
-  gssh 'tail -n 1 ~/build.log' | grep -q 'BUILD OK' || die "the build failed; the log is above, and in the guest at ~/build.log"
+  gssh "tail -n +$from ~/build.log" || true
+  [[ $(gssh 'tail -n 1 ~/build.log' | head -c 4096 || true) == '==> BUILD OK: '* ]] || die "the build failed; the log is above, and in the guest at ~/build.log"
   out=$(mktemp -d "$D/out/$(git -C "$REPO" rev-parse --short "$sha")-$(date +%Y%m%d-%H%M).XXXX")
   # The dev image only when it is yours: without a key, the guest's throwaway
   # one built and checked it, as CI's does, and it stays in there.
@@ -376,6 +399,11 @@ stop() {
     gssh 'sync; sudo systemctl poweroff' 2>/dev/null || true
     for _ in $(seq 60); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
     kill "$pid" 2>/dev/null || true
+    for _ in $(seq 10); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+    kill -9 "$pid" 2>/dev/null || true
+    for _ in $(seq 10); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+    # Its pidfile kept while it lives, so nothing starts another beside it.
+    kill -0 "$pid" 2>/dev/null && die "QEMU ($pid) did not exit"
   fi
   kill_passt || true
   rm -f "$D/run/qemu.pid"

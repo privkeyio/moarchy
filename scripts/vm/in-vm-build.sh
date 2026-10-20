@@ -29,6 +29,8 @@ verify() {
   "$@" 2>&1 | tee "$out" || rc=$?
   [ "$rc" = 0 ] && return 0
   local fails others
+  # verify.sh got to its verdict, rather than stopping after that check.
+  sed 's/\x1b\[[0-9;]*m//g' "$out" | grep -qE '^\s*some checks failed$' || return 1
   fails=$(sed 's/\x1b\[[0-9;]*m//g' "$out" | grep -E '^\s*FAIL ' || true)
   others=$(printf '%s\n' "$fails" | grep -v 'resize2fs failed on /dev/loop' | grep -c . || true)
   if [ "$others" = 0 ] && [ -n "$fails" ]; then
