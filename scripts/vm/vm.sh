@@ -76,6 +76,11 @@ kill_passt() { [ -f "$D/run/passt.pid" ] && kill "$(cat "$D/run/passt.pid")" 2>/
 # by the time the script exits.
 CLEANUP=:
 on_exit() { CLEANUP="$CLEANUP; $1"; trap "$CLEANUP" EXIT; }
+# bash runs no EXIT trap when a signal ends it, which left a VM, its passt and
+# the isolation listener running after a Ctrl-C. Ended by one, it exits, and
+# cleans up. Ctrl-C during a build therefore stops the VM too.
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
 
 # What the guest prints, with the terminal's control sequences taken out: a
 # build log carries upstream builds' output, and an escape sequence in it
