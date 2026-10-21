@@ -344,6 +344,7 @@ package() {
   # because the sudoers entry names an absolute path and we shipped a checkout
   # rather than a package (docs/build-log.md, known-bad). Packaging is what
   # fixes it; it is listed there as harmless-but-noisy.
+  install -dm750 "$pkgdir/etc/sudoers.d"
   install -Dm440 etc/sudoers.d/omarchy-theme-browser \
     "$pkgdir/etc/sudoers.d/omarchy-theme-browser"
   # The DNS presets and the time zone, which Settings sets with no terminal to

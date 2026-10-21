@@ -159,6 +159,14 @@ rm -f $W/r/usr/lib/tmpfiles.d/omarchy-nopasswd-sudo.conf
 mkdir -p $W/r/etc/polkit-1/rules.d
 printf 'polkit.addRule(function (a, s) { if (a.id == "org.moarchy.store.manage") return polkit.Result.YES; });\n' \
   > $W/r/etc/polkit-1/rules.d/49-planted.rules
+# 25. a packaged-looking polkit rule giving wheel everything
+printf 'polkit.addRule(function (a, s) { if (s.isInGroup("wheel")) return polkit.Result.YES; });\n' \
+  > $W/r/usr/share/polkit-1/rules.d/49-wheel.rules
+# 26. the user in the group empower.rules gives everything to
+sed -i 's/^empower:x:\([0-9]*\):$/empower:x:\1:moarchy/' $W/r/etc/group
+# 27. pkexec with no PIN, in its own policy
+sed -i '/action id="org.freedesktop.policykit.exec"/,/<\/action>/s|<allow_active>auth_admin</allow_active>|<allow_active>yes</allow_active>|' \
+  $W/r/usr/share/polkit-1/actions/org.freedesktop.policykit.policy
 umount $W/r
 
 echo "==> re-sparsing"
@@ -214,8 +222,11 @@ catches "/etc/sudoers is not the sudo package's own rules" "passwordless sudo in
 catches "sudoers files this image does not ship:.*/etc/sudoers.d/20-moarchy-pin 30-moarchy-grants" \
                                         "a sudoers file named for two the image ships"
 catches "nothing removes Settings' timed passwordless sudo at boot" "no boot cleanup for timed passwordless sudo"
-catches "polkit rules grant the store without the PIN: /etc/polkit-1/rules.d/49-planted.rules" \
+catches "polkit rules this image does not ship: /etc/polkit-1/rules.d/49-planted.rules" \
                                         "a polkit rule granting the store with no PIN"
+catches "polkit rules differ from the reviewed set:.*49-wheel.rules" "a new polkit rule giving wheel everything"
+catches "the empower group has members.*moarchy" "the user in the empower group"
+catches "pkexec's own policy is not auth_admin: auth_admin yes" "pkexec with no PIN"
 
 echo
 if [ $rc -ne 0 ]; then ok "verify.sh exited non-zero ($rc)"; else no "verify.sh exited 0 on a broken image"; fi

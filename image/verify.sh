@@ -584,11 +584,33 @@ done
 grep -qx 'r! /etc/sudoers.d/99-omarchy-nopasswd-\*' "$R/usr/lib/tmpfiles.d/omarchy-nopasswd-sudo.conf" 2>/dev/null \
   && ok "boot removes a timed passwordless sudo left by a reboot" \
   || no "nothing removes Settings' timed passwordless sudo at boot -- a reboot inside it keeps it"
-# The store asks for the PIN, as its own policy says: no rule may answer yes
-# for it.
-_store=$(grep -ls 'store.manage' "$R"/usr/share/polkit-1/rules.d/* "$R"/etc/polkit-1/rules.d/* 2>/dev/null | sed "s|^$R||" | tr '\n' ' ')
-[ -z "$_store" ] && ok "no polkit rule installs store apps without the PIN" \
-                 || no "polkit rules grant the store without the PIN: $_store"
+# polkit's rules, byte for byte the ones the packages ship: a rule can answer
+# yes for anything, the store and pkexec among them, so a changed or new one is
+# reviewed before it is added here. Only NetworkManager's answers yes for
+# wheel (system connections, from a local session).
+_polkit_want="4192b104907809623aa7ca4c58e1527da19710bae6278abe96f88d9f2d6430e9  50-default.rules
+d9a62ab1ec477a4be1657769dfd194c75d1a07a4357e7717aa19ad5c07c3fc26  empower.rules
+392e205d6b993b8e629c35ddd2307ad8460bd41ff893801028c2e530fe816567  org.freedesktop.GeoClue2.rules
+088713232069609bfc9573bbb1d8cb723963064bb6a6957933db72d0765fe31e  org.freedesktop.NetworkManager.rules
+1aa33227c8c09f21c970bb7b3db03fc10710419d7b4b2aa923762dccf38d4633  org.freedesktop.upower.rules
+682272c73e766dfb6e1f45cd6e0773d57e96da4073a329c24d42d261907ba52c  systemd-networkd.rules"
+_polkit_have=$(cd "$R/usr/share/polkit-1/rules.d" 2>/dev/null && find . -maxdepth 1 -name '*.rules' -printf '%P\0' | sort -z | xargs -0r sha256sum)
+[ "$_polkit_have" = "$_polkit_want" ] && ok "polkit's rules are exactly the packages' own" \
+  || no "polkit rules differ from the reviewed set: $(diff <(echo "$_polkit_want") <(echo "$_polkit_have") | grep '^[<>]' | tr '\n' '|')"
+_polkit_etc=$(find "$R/etc/polkit-1/rules.d" -mindepth 1 2>/dev/null | sed "s|^$R||" | tr '\n' ' ')
+[ -z "$_polkit_etc" ] && ok "no polkit rules in /etc" || no "polkit rules this image does not ship: $_polkit_etc"
+# empower.rules answers yes for everything to that group.
+[ -z "$(awk -F: '$1 == "empower" { print $4 }' "$R/etc/group")" ] && ok "the empower group is empty" \
+  || no "the empower group has members, and polkit lets them do anything: $(awk -F: '$1 == "empower" { print $4 }' "$R/etc/group")"
+# And what an action allows when no rule answers.
+_polkit_default() {
+  awk -v id="$2" '/<action id=/ { on = index($0, "\"" id "\"") > 0 }
+    on && /<allow_(any|inactive|active)>/ { gsub(/.*<allow_[a-z]*>|<\/.*/, ""); print }' "$R/usr/share/polkit-1/actions/$1" 2>/dev/null | sort -u | tr '\n' ' '
+}
+[ "$(_polkit_default org.freedesktop.policykit.policy org.freedesktop.policykit.exec)" = "auth_admin " ] \
+  && ok "pkexec asks for the PIN" || no "pkexec's own policy is not auth_admin: $(_polkit_default org.freedesktop.policykit.policy org.freedesktop.policykit.exec)"
+[ "$(_polkit_default org.moarchy.Store.policy org.moarchy.store.manage)" = "auth_self_keep " ] \
+  && ok "the store asks for the PIN" || no "the store's own policy is not auth_self_keep: $(_polkit_default org.moarchy.Store.policy org.moarchy.store.manage)"
 [ -f "$_sud" ] && { [ "$(stat -c '%a %u %g' "$_sud")" = "440 0 0" ] \
   && ok "20-moarchy-pin is 0440 root:root" \
   || no "20-moarchy-pin is $(stat -c '%a %U:%G' "$_sud"), not 0440 root:root -- sudo ignores it or anyone may edit it"; }
