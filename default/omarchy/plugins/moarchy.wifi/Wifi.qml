@@ -333,12 +333,12 @@ Item {
   // password" at a network that was simply out of range would send someone to
   // retype a passphrase that was right.
   //
-  // Joining a network asks for the PIN first (default/polkit/
-  // 49-moarchy-networkmanager.rules), and a dismissed PIN dialog is one more
-  // way to end up here, so the time allowed covers typing it.
+  // Joining a network asks for the PIN first, twice for a new one (default/
+  // polkit/49-moarchy-networkmanager.rules), and a dismissed PIN dialog is one
+  // more way to end up here, so the time allowed covers typing both.
   Timer {
     id: joinTimeout
-    interval: 60000
+    interval: 120000
     onTriggered: {
       if (root.busySsid === "") return
       root.errorSsid = root.busySsid

@@ -228,6 +228,8 @@ printf 'L /etc/zz-x - - - - /etc/sudoers.d\nf /etc/zz-x/99-w 0440 root root - mo
 : > $W/r/etc/tmpfiles.d/omarchy-nopasswd-sudo.conf
 # 47. a packaged tmpfiles file replaced by a link to /dev/null
 ln -sf /dev/null $W/r/usr/lib/tmpfiles.d/sudo.conf
+# 48. root code from the user's home at boot, through a path that names nothing
+printf 'f /etc/ld.so.preload 0644 root root - /home/moarchy/.cache/x.so\n' > $W/r/usr/lib/tmpfiles.d/zz-preload.conf
 umount $W/r
 
 echo "==> re-sparsing"
@@ -301,17 +303,19 @@ catches "sudoers omarchy-dns is not exactly its rules" "a widened DNS rule"
 catches "sudoers omarchy-tzupdate is 444" "a sudoers file with the wrong mode"
 catches "the store's own policy is not auth_self_keep" "the store with no PIN in its own policy"
 catches "the empower group has members.*user eve" "an account whose own group is empower"
-catches "boot-time writes this image does not ship:.*> zz-polkit.conf: f /run/polkit-1" "a polkit rule written at boot"
+catches "boot-time writers differ from image/boot-writers-reviewed:.*> [0-9a-f]*  tmpfiles.d/zz-polkit.conf" "a polkit rule written at boot"
 catches "override or replace the packages' own:.*/usr/local/lib/tmpfiles.d/zz-specifier.conf" \
                                         "a polkit rule written at boot from /usr/local/lib"
 catches "override or replace the packages' own:.*/etc/tmpfiles.d/zz-sudo.conf" "a sudoers file written at boot from /etc"
-catches "boot-time group members this image does not ship:.*zz-empower.conf: m moarchy empower" "the user put in empower at boot"
-catches "boot-time writes this image does not ship:.*> zz-escape.conf: f /etc/sud.x6fers.d/99-z" \
+catches "boot-time writers differ from image/boot-writers-reviewed:.*> [0-9a-f]*  sysusers.d/zz-empower.conf" "the user put in empower at boot"
+catches "boot-time writers differ from image/boot-writers-reviewed:.*> [0-9a-f]*  tmpfiles.d/zz-escape.conf" \
                                         "a sudoers file at boot spelled with an escape"
-catches "boot-time writes this image does not ship:.*> zz-link.conf: L /etc/zz-x" "a link carrying a file into sudoers.d"
+catches "boot-time writers differ from image/boot-writers-reviewed:.*> [0-9a-f]*  tmpfiles.d/zz-link.conf" "a link carrying a file into sudoers.d"
 catches "override or replace the packages' own:.*/etc/tmpfiles.d/omarchy-nopasswd-sudo.conf" \
                                         "the timed sudo cleanup masked from /etc"
 catches "override or replace the packages' own:.*/usr/lib/tmpfiles.d/sudo.conf" "a packaged tmpfiles file linked to /dev/null"
+catches "boot-time writers differ from image/boot-writers-reviewed:.*> [0-9a-f]*  tmpfiles.d/zz-preload.conf" \
+                                        "/etc/ld.so.preload written at boot"
 catches "userdb records this image does not ship: /usr/lib/userdb/moarchy:empower.membership" "the user put in empower through userdb"
 catches "nsswitch.conf is not the filesystem package's own" "sudo's rules from another source"
 catches "polkit rules differ from the reviewed set:.*< [0-9a-f]*  49-moarchy-networkmanager.rules" \

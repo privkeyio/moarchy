@@ -595,7 +595,7 @@ grep -qx 'r! /etc/sudoers.d/99-omarchy-nopasswd-\*' "$R/usr/lib/tmpfiles.d/omarc
 # reviewed before it is added here. NetworkManager's answers yes for wheel
 # (system connections, from a local session); moarchy's 49- sorts ahead of it
 # and asks for the PIN instead.
-_polkit_want="225d030451c2135f476ab1fd4a4821901d4a67e08684e77ce848d3448f5351bd  49-moarchy-networkmanager.rules
+_polkit_want="6ba8a6999b30f00bb181d79ad5807e86b4b60b69d290e1f8ba69dad00d46fd40  49-moarchy-networkmanager.rules
 4192b104907809623aa7ca4c58e1527da19710bae6278abe96f88d9f2d6430e9  50-default.rules
 d9a62ab1ec477a4be1657769dfd194c75d1a07a4357e7717aa19ad5c07c3fc26  empower.rules
 392e205d6b993b8e629c35ddd2307ad8460bd41ff893801028c2e530fe816567  org.freedesktop.GeoClue2.rules
@@ -628,38 +628,21 @@ _polkit_yes=$(awk '/<action id=/ { id = $0; sub(/.*<action id="/, "", id); sub(/
 # /usr/local/lib before /usr/lib, and a file there masks the packaged one of
 # the same name, an empty one or a link to /dev/null included, so those
 # directories hold nothing and /usr/lib's entries are plain files. Then every
-# tmpfiles line that touches sudo, polkit, userdb or the account files in any
-# of its fields is held to image/tmpfiles-reviewed: a quote, a specifier, an
-# escape or a .. counts as touching them, since tmpfiles decodes all four
-# (\x6f is an o), and one line's link can carry the next one's path anywhere.
-# Every sysusers line that adds a group member or names wheel or empower is
-# held to the list below. A unit's own ExecStart can still write such a file;
+# one of those, byte for byte, against image/boot-writers-reviewed: a single
+# line can create /etc/ld.so.preload, a sysctl or a sudoers file, spelled with
+# an escape or reached through a link, and no list of paths to watch for
+# catches all of them. A unit's own ExecStart can still write such a file;
 # nothing here reads what units run.
 _boot_over=$(for d in etc run usr/local/lib; do find "$R/$d/tmpfiles.d" "$R/$d/sysusers.d" -mindepth 1 2>/dev/null; done
              find "$R/usr/lib/tmpfiles.d" "$R/usr/lib/sysusers.d" -mindepth 1 ! -type f 2>/dev/null)
 _boot_over=$(printf '%s\n' "$_boot_over" | sed "s|^$R||" | tr '\n' ' ' | sed 's/ *$//')
 [ -z "$_boot_over" ] && ok "tmpfiles and sysusers read only the packages' own files" \
   || no "tmpfiles or sysusers files that override or replace the packages' own: $_boot_over"
-_tmpfiles_have=$(find "$R/usr/lib/tmpfiles.d" -maxdepth 1 -type f -name '*.conf' -print0 2>/dev/null |
-  xargs -0r awk '/^[ \t]*(#|$)/ { next }
-    { l = $0; gsub(/\/var\/run/, "/run", l)
-      if (l ~ /[\\%"]/ || l ~ /polkit|userdb|sudo/ || l ~ /\/etc\/(passwd|group|shadow|gshadow|nsswitch\.conf|pam\.d)/ || l ~ /\.\./) {
-        f = FILENAME; sub(/.*\//, "", f); $1 = $1; print f ": " $0 } }' | LC_ALL=C sort)
-_tmpfiles_bad=$(diff "$_here/tmpfiles-reviewed" <(printf '%s\n' "$_tmpfiles_have") | grep '^[<>]' | tr '\n' '|')
-[ -z "$_tmpfiles_bad" ] && ok "boot writes nothing to sudo, polkit or the accounts beyond image/tmpfiles-reviewed" \
-  || no "boot-time writes this image does not ship: $_tmpfiles_bad"
-_sysusers_want='arch.conf: m bin daemon
-arch.conf: m bin sys
-arch.conf: m daemon adm
-arch.conf: m daemon bin
-arch.conf: m root root
-basic.conf: g empower - - -
-basic.conf: g wheel - - -'
-_sysusers_have=$(find "$R/usr/lib/sysusers.d" -maxdepth 1 -type f -name '*.conf' -print0 2>/dev/null |
-  xargs -0r awk '/^[ \t]*(#|$)/ { next }
-    $1 == "m" || /empower|wheel/ { f = FILENAME; sub(/.*\//, "", f); $1 = $1; print f ": " $0 }' | LC_ALL=C sort)
-[ "$_sysusers_have" = "$_sysusers_want" ] && ok "boot adds no account to a group beyond the reviewed set" \
-  || no "boot-time group members this image does not ship: $(diff <(echo "$_sysusers_want") <(echo "$_sysusers_have") | grep '^[<>]' | tr '\n' '|')"
+_boot_bad=$(diff "$_here/boot-writers-reviewed" \
+  <(cd "$R/usr/lib" 2>/dev/null && find tmpfiles.d sysusers.d -mindepth 1 -type f -print0 | xargs -0r sha256sum | LC_ALL=C sort -k2) |
+  grep '^[<>]' | tr '\n' '|')
+[ -z "$_boot_bad" ] && ok "tmpfiles and sysusers files are exactly the reviewed set" \
+  || no "boot-time writers differ from image/boot-writers-reviewed: $_boot_bad"
 # systemd's userdb, which nsswitch.conf reads after the files: one drop-in
 # named user:group.membership is a group member, empower's included.
 _userdb=$(for d in etc/userdb run/userdb run/host/userdb usr/lib/userdb usr/local/lib/userdb; do find "$R/$d" -mindepth 1 2>/dev/null; done | sed "s|^$R||" | tr '\n' ' ')

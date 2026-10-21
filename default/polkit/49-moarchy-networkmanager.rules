@@ -14,10 +14,13 @@
 // rewrites the live connection's DNS, routes and addresses without saving
 // them.
 //
-// _KEEP: the process that gave the PIN keeps it for polkit's five minutes, so
-// joining or switching networks asks once. Another process asks for its own.
-// Autoconnect is NetworkManager's own and asks nothing, and the radios and
-// scanning (enable-disable-*, wifi.scan) still ask nothing.
+// _KEEP: the process that gave the PIN keeps it for polkit's five minutes, for
+// that one action, and another process asks for its own. So switching to a
+// saved network or forgetting one asks once, and the first join of a new one
+// asks twice: network-control to bring it up, then settings.modify.system to
+// save it (measured, docs/structure.md I8). Autoconnect is NetworkManager's
+// own and asks nothing, and the radios and scanning (enable-disable-*,
+// wifi.scan) still ask nothing.
 polkit.addRule(function (action, subject) {
   if (action.id == "org.freedesktop.NetworkManager.settings.modify.system" ||
       action.id == "org.freedesktop.NetworkManager.settings.modify.own" ||
