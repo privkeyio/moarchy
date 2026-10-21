@@ -27,7 +27,8 @@ _replace_image_keyring() {
 # (docs/structure.md I8). No package owns the file, so an upgrade alone would
 # keep it. It goes only when it is exactly the one line those images wrote,
 # the phone is not a dev image, and the account already has its PIN, so sudo
-# is never left with no way in. A file edited by hand stays.
+# is never left with no way in; with no PIN yet, `moarchy-pin first` removes
+# it instead. A file edited by hand stays.
 _drop_image_nopasswd() {
   local f=/etc/sudoers.d/10-moarchy user
   [ -f "$f" ] && [ ! -e /etc/moarchy-debug-image ] || return 0

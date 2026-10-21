@@ -185,6 +185,25 @@ cat > $W/r/usr/share/polkit-1/actions/org.example.planted.policy <<'POLICY'
   </action>
 </policyconfig>
 POLICY
+# 30. a rule written to read as a comment: sudo takes #-1 for a user ID
+printf '#-1,%%wheel ALL=(ALL) NOPASSWD: ALL\n' >> $W/r/etc/sudoers.d/00-moarchy-wheel
+# 31. a sudoers file whose name ends in a newline
+printf 'moarchy ALL=(ALL) NOPASSWD: ALL\n' > "$W/r/etc/sudoers.d/00-moarchy-wheel"$'\n'
+# 32. a no-PIN target's directory writable by its group
+chmod g+w $W/r/usr/lib/moarchy/bin
+# 33. sudo.conf pointing sudo at another policy file
+printf 'Plugin sudoers_policy sudoers.so sudoers_file=/tmp/sudoers\n' >> $W/r/etc/sudo.conf
+# 34. upstream's DNS rule widened, and its time zone rule left readable
+sed -i '/NOPASSWD/s|$|, /usr/bin/omarchy-dns Custom|' $W/r/etc/sudoers.d/omarchy-dns
+chmod 444 $W/r/etc/sudoers.d/omarchy-tzupdate
+# 35. the store with no PIN, in its own policy
+sed -i 's|<allow_active>auth_self_keep</allow_active>|<allow_active>yes</allow_active>|' \
+  $W/r/usr/share/polkit-1/actions/org.moarchy.Store.policy
+# 36. an account whose own group is empower
+printf 'eve:x:1500:%s::/:/usr/bin/nologin\n' "$(awk -F: '$1 == "empower" { print $3 }' $W/r/etc/group)" >> $W/r/etc/passwd
+# 37. a tmpfiles rule writing a polkit rule at boot
+printf 'f /run/polkit-1/rules.d/00-x.rules 0644 root root - polkit.addRule(function () { return "yes"; });\n' \
+  > $W/r/usr/lib/tmpfiles.d/zz-polkit.conf
 umount $W/r
 
 echo "==> re-sparsing"
@@ -237,17 +256,28 @@ catches "sudoers files this image does not ship:.*/etc/sudoers.d/10-moarchy" \
                                         "a dev image's passwordless sudo in a release image"
 catches "sudoers 30-moarchy-grants is not exactly its rules" "a widened tile and keypad grant"
 catches "/etc/sudoers is not the sudo package's own rules" "passwordless sudo in /etc/sudoers"
-catches "sudoers files this image does not ship:.*/etc/sudoers.d/20-moarchy-pin 30-moarchy-grants" \
+catches "sudoers files this image does not ship:.*/etc/sudoers.d/20-moarchy-pin.*30-moarchy-grants" \
                                         "a sudoers file named for two the image ships"
 catches "nothing removes Settings' timed passwordless sudo at boot" "no boot cleanup for timed passwordless sudo"
 catches "polkit rules this image does not ship: /etc/polkit-1/rules.d/49-planted.rules" \
                                         "a polkit rule granting the store with no PIN"
 catches "polkit rules differ from the reviewed set:.*49-wheel.rules" "a new polkit rule giving wheel everything"
-catches "the empower group has members.*moarchy" "the user in the empower group"
+catches "the empower group has members.*group empower:moarchy" "the user in the empower group"
 catches "pkexec's own policy is not auth_admin: auth_admin yes" "pkexec with no PIN"
 catches "polkit rules this image does not ship:.*/usr/local/share/polkit-1/rules.d/49-local.rules" \
                                         "a polkit rule in /usr/local/share"
 catches "pkexec runs these as root with no PIN: org.example.planted.shell" "a pkexec action with no PIN"
+catches "polkit actions allowed without asking differ from image/polkit-yes-actions:.*> org.example.planted.shell" \
+                                        "a new action allowed without asking"
+catches "sudoers 00-moarchy-wheel is not exactly its rules" "a rule hidden as a #-1 comment"
+catches "sudoers files this image does not ship:.*/etc/sudoers.d/00-moarchy-wheel.n'" "a sudoers file named with a newline"
+catches "a no-PIN rule runs something others can change:.* /usr/lib/moarchy/bin" "a no-PIN target's directory others can write"
+catches "sudo.conf is not the sudo package's own" "sudo.conf naming another policy file"
+catches "sudoers omarchy-dns is not exactly its rules" "a widened DNS rule"
+catches "sudoers omarchy-tzupdate is 444" "a sudoers file with the wrong mode"
+catches "the store's own policy is not auth_self_keep" "the store with no PIN in its own policy"
+catches "the empower group has members.*user eve" "an account whose own group is empower"
+catches "tmpfiles rules write polkit's /run: /usr/lib/tmpfiles.d/zz-polkit.conf" "a polkit rule written at boot"
 
 echo
 if [ $rc -ne 0 ]; then ok "verify.sh exited non-zero ($rc)"; else no "verify.sh exited 0 on a broken image"; fi

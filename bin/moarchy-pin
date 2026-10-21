@@ -210,3 +210,12 @@ fi
 printf '%s:%s\n' "$user" "$pin" | chpasswd || die "chpasswd could not set the PIN"
 install -m 644 /dev/null "$STAMP" || die "the PIN is set, but its stamp could not be written"
 write_guard 0 0 0
+
+# The passwordless sudo older images wrote, which the package upgrade keeps
+# while there is no PIN yet (moarchy.install). Only that exact line, and never
+# on a dev image.
+if [[ $mode == first && ! -e /etc/moarchy-debug-image && -f /etc/sudoers.d/10-moarchy ]]; then
+  nopasswd=$(cat /etc/sudoers.d/10-moarchy; printf x)
+  [[ $nopasswd == "$user ALL=(ALL) NOPASSWD: ALL"$'\n'x ]] && rm -f /etc/sudoers.d/10-moarchy
+fi
+exit 0

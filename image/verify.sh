@@ -516,52 +516,54 @@ _oth=$(grep -ls 'moarchy-pin' "$R/etc/sudoers" "$R"/etc/sudoers.d/* | grep -vxF 
 # Every rule sudo reads, against the ones this image means to have
 # (docs/structure.md I8). A rule that runs something as root with no PIN is
 # root for anyone holding an unlocked phone, so each file is held to its exact
-# rules, comments aside, and a file the image does not ship fails however
-# harmless it looks. A comment is a # line that is not #include or a #uid.
-_rules() { awk '{ sub(/^[ \t]+/, "") } $0 == "" { next } /^#/ && !/^#include/ && !/^#[0-9]/ { next } { print }' "$1"; }
-_want_rules() {
-  local f="$R/etc/sudoers.d/$1"; shift
-  if [ ! -f "$f" ]; then no "/etc/sudoers.d/$(basename "$f") missing"; return; fi
-  if [ "$(_rules "$f")" = "$(printf '%s\n' "$@")" ]; then ok "sudoers $(basename "$f") holds exactly its rules"
-  else no "sudoers $(basename "$f") is not exactly its rules -- a widened rule is root without a PIN"; fi
-  [ "$(stat -c '%a %u %g' "$f")" = "440 0 0" ] || no "sudoers $(basename "$f") is $(stat -c '%a %U:%G' "$f"), not 0440 root:root"
+# bytes, and a file the image does not ship fails however harmless it looks.
+# Bytes rather than rules: what sudo takes for a comment is its parser's call,
+# and `#-1,%wheel ...` is a rule that reads as one.
+_sha() { sha256sum <"$1" | cut -d' ' -f1; }
+# <name> <the repo file it is, or its sha256>
+_want_sudoers() {
+  local f="$R/etc/sudoers.d/$1" want=$2
+  if [ ! -f "$f" ]; then no "/etc/sudoers.d/$1 missing"; return; fi
+  [ -f "$want" ] && want=$(_sha "$want")
+  if [ "$(_sha "$f")" = "$want" ]; then ok "sudoers $1 is exactly the file shipped"
+  else no "sudoers $1 is not exactly its rules -- a widened rule is root without a PIN"; fi
+  [ "$(stat -c '%a %u %g' "$f")" = "440 0 0" ] || no "sudoers $1 is $(stat -c '%a %U:%G' "$f"), not 0440 root:root"
 }
-_want_rules 00-moarchy-wheel '%wheel ALL=(ALL:ALL) ALL'
-_want_rules 30-moarchy-grants '%wheel ALL=(root) NOPASSWD: /usr/lib/moarchy/bin/moarchy-data on, /usr/lib/moarchy/bin/moarchy-data off, /usr/lib/moarchy/bin/moarchy-sim unlock'
-_want_rules omarchy-theme-browser '%wheel ALL=(root) NOPASSWD: /usr/bin/omarchy-theme-set-browser-policy [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'
-_want_rules omarchy-dns '%wheel ALL=(root) NOPASSWD: /usr/bin/omarchy-dns Cloudflare, /usr/bin/omarchy-dns Google, /usr/bin/omarchy-dns DHCP'
-_want_rules omarchy-tzupdate '%wheel ALL=(root) NOPASSWD: /usr/bin/timedatectl ^set-timezone [A-Za-z0-9_+][A-Za-z0-9_+.-]*(/[A-Za-z0-9_+][A-Za-z0-9_+.-]*)*$'
-_known="00-moarchy-wheel 20-moarchy-pin 30-moarchy-grants omarchy-theme-browser omarchy-dns omarchy-tzupdate"
+_want_sudoers 00-moarchy-wheel /repo/default/sudoers/00-moarchy-wheel
+_want_sudoers 30-moarchy-grants /repo/default/sudoers/30-moarchy-grants
+# Upstream's, at the pinned omarchy ref.
+_want_sudoers omarchy-theme-browser b2981edf2d79674071fe747c7de23233a0c82afae24054aa37efa72065544d41
+_want_sudoers omarchy-dns 682b4fa259e09966045373448f4c6c2979aabba8f3605f9ffed15a44ff29a7b1
+_want_sudoers omarchy-tzupdate 1165973dd928175065693584be95f6ed0ef5e2c9dfeebd9790f1f3ea94a0fe05
+_known=" 00-moarchy-wheel 20-moarchy-pin 30-moarchy-grants omarchy-theme-browser omarchy-dns omarchy-tzupdate "
 if [ -e "$R/usr/lib/moarchy/bin/moarchy-android-launch" ]; then
-  _want_rules moarchy-android-launch '%wheel ALL=(root) NOPASSWD: /usr/lib/moarchy/bin/moarchy-android-launch ^--start [A-Za-z0-9_][A-Za-z0-9_.]*$'
-  _known="$_known moarchy-android-launch"
+  _want_sudoers moarchy-android-launch /repo/pkgbuilds/moarchy-waydroid/moarchy-android-launch.sudoers
+  _known="$_known moarchy-android-launch "
 fi
 # Passwordless sudo is a dev image's alone.
 if [ "${DEV_IMAGE:-0}" = 1 ]; then
-  _want_rules 10-moarchy 'moarchy ALL=(ALL) NOPASSWD: ALL'
-  _known="$_known 10-moarchy"
+  _want_sudoers 10-moarchy "$(printf 'moarchy ALL=(ALL) NOPASSWD: ALL\n' | sha256sum | cut -d' ' -f1)"
+  _known="$_known 10-moarchy "
 fi
-# By whole name: a file called "20-moarchy-pin 30-moarchy-grants" is one sudo
-# reads, and no list match may take it for two it knows.
-_extra=$(for f in "$R"/etc/sudoers.d/*; do [ -e "$f" ] || continue
-           printf '%s\n' $_known | grep -qxF -- "$(basename "$f")" || printf '%s ' "${f#$R}"; done)
+# By whole name, and only names made of [A-Za-z0-9_-]: sudo reads a file
+# called "20-moarchy-pin 30-moarchy-grants", or one with a newline in its
+# name, and no list match may take it for one it knows.
+_extra=$(for f in "$R"/etc/sudoers.d/*; do [ -e "$f" ] || [ -L "$f" ] || continue
+           n=${f##*/}
+           if [[ ! $n =~ ^[A-Za-z0-9_-]+$ ]] || [[ $_known != *" $n "* ]]; then printf '%q ' "${f#$R}"; fi; done)
 [ -z "$_extra" ] && ok "no sudoers file this image does not ship" \
                  || no "sudoers files this image does not ship: $_extra"
-# The sudo package's own /etc/sudoers and sudo.conf, rule for rule (sudo
-# 1.9.17-6 on Arch Linux ARM): no rule there skips the PIN, secure_path keeps
-# the caller's PATH out of what root runs, it reads no directory but
+# The sudo package's own /etc/sudoers and sudo.conf, byte for byte (sudo
+# 1.9.17.p2-6 on Arch Linux ARM). No rule there skips the PIN, secure_path
+# keeps the caller's PATH out of what root runs, it reads no directory but
 # sudoers.d, and sudo.conf names no other policy or file. A sudo upgrade that
-# changes them fails here, to be read before this list moves.
-_main_want='Defaults!/usr/bin/visudo env_keep += "SUDO_EDITOR EDITOR VISUAL"
-Defaults secure_path="/usr/local/sbin:/usr/local/bin:/usr/bin"
-root ALL=(ALL:ALL) ALL
-@includedir /etc/sudoers.d'
-[ "$(_rules "$R/etc/sudoers" 2>/dev/null)" = "$_main_want" ] \
-  && ok "/etc/sudoers is the sudo package's own, rule for rule" \
-  || no "/etc/sudoers is not the sudo package's own rules: $(_rules "$R/etc/sudoers" 2>/dev/null | tr '\n' '|')"
-[ -z "$(_rules "$R/etc/sudo.conf" 2>/dev/null)" ] \
-  && ok "sudo.conf sets nothing, so sudo reads /etc/sudoers" \
-  || no "sudo.conf sets something: $(_rules "$R/etc/sudo.conf" | tr '\n' '|')"
+# changes either fails here, to be read before these move.
+[ -f "$R/etc/sudoers" ] && [ "$(_sha "$R/etc/sudoers")" = 367f88ea6741558538ed9e60ce0515d85d650f6e127a788c1f47d0a09508fcbe ] \
+  && ok "/etc/sudoers is the sudo package's own" \
+  || no "/etc/sudoers is not the sudo package's own rules"
+[ -f "$R/etc/sudo.conf" ] && [ "$(_sha "$R/etc/sudo.conf")" = f688ac6620d09e5bf2a2adf0654cae38f3330a9220a25a529fb0eacd8d8f22f0 ] \
+  && ok "sudo.conf is the sudo package's own, so sudo reads /etc/sudoers" \
+  || no "sudo.conf is not the sudo package's own"
 grep -qE '^[[:space:]]*sudoers[[:space:]]*:' "$R/etc/nsswitch.conf" 2>/dev/null &&
   no "nsswitch.conf gives sudo another source of rules" || ok "nsswitch.conf gives sudo no other source of rules"
 # What each no-PIN rule runs, and the directories it is in: root's to write
@@ -608,9 +610,24 @@ _polkit_exec=$(awk '/<action id=/ { id = $0; sub(/.*<action id="/, "", id); sub(
   /<allow_(any|inactive|active)>yes</ { yes = 1 }
   /<\/action>/ { if (exe && yes) print id }' "$R"/usr/share/polkit-1/actions/*.policy 2>/dev/null | tr '\n' ' ')
 [ -z "$_polkit_exec" ] && ok "pkexec runs no program without asking" || no "pkexec runs these as root with no PIN: $_polkit_exec"
-# empower.rules answers yes for everything to that group.
-[ -z "$(awk -F: '$1 == "empower" { print $4 }' "$R/etc/group")" ] && ok "the empower group is empty" \
-  || no "the empower group has members, and polkit lets them do anything: $(awk -F: '$1 == "empower" { print $4 }' "$R/etc/group")"
+# Every action allowed without asking, against the reviewed list: a package
+# that adds one gives every app it, with no PIN.
+_polkit_yes=$(awk '/<action id=/ { id = $0; sub(/.*<action id="/, "", id); sub(/".*/, "", id); yes = 0 }
+  /<allow_(any|inactive|active)>yes</ { yes = 1 }
+  /<\/action>/ { if (yes) print id }' "$R"/usr/share/polkit-1/actions/*.policy 2>/dev/null | LC_ALL=C sort |
+  diff "$_here/polkit-yes-actions" - | grep '^[<>]' | tr '\n' ' ')
+[ -z "$_polkit_yes" ] && ok "polkit allows without asking only the reviewed actions" \
+  || no "polkit actions allowed without asking differ from image/polkit-yes-actions: $_polkit_yes"
+# Nor written there at boot.
+_polkit_run=$(awk '!/^[ \t]*#/ && $2 ~ /^\/run\/polkit-1/ { print FILENAME }' "$R"/usr/lib/tmpfiles.d/*.conf "$R"/etc/tmpfiles.d/*.conf 2>/dev/null | sed "s|^$R||" | sort -u | tr '\n' ' ')
+[ -z "$_polkit_run" ] && ok "no tmpfiles rule writes polkit's /run" || no "tmpfiles rules write polkit's /run: $_polkit_run"
+# empower.rules answers yes for everything to that group, whether it is an
+# account's own group or one it is listed in.
+_emp_gid=$(awk -F: '$1 == "empower" { print $3 }' "$R/etc/group")
+_emp=$(awk -F: -v g="$_emp_gid" 'FILENAME ~ /group$/ && $3 == g && ($1 != "empower" || $4 != "") { print "group " $1 ":" $4 }
+  FILENAME ~ /passwd$/ && $4 == g { print "user " $1 }' "$R/etc/group" "$R/etc/passwd" | tr '\n' ' ')
+[ -n "$_emp_gid" ] && [ -z "$_emp" ] && ok "no account is in the empower group" \
+  || no "the empower group has members, and polkit lets them do anything: ${_emp:-no empower group to check}"
 # And what an action allows when no rule answers.
 _polkit_default() {
   awk -v id="$2" '/<action id=/ { on = index($0, "\"" id "\"") > 0 }

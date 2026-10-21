@@ -95,14 +95,14 @@ P=99999999-8888-7777-6666-555555555555
 # user's could have made.
 stub /usr/bin/nmcli "case \"\$*\" in
   *'UUID,TYPE,ACTIVE c show'*) echo '$P:gsm:yes'; echo '$U:gsm:no' ;;
-  '-g connection.permissions c show $P') echo 'user:tester' ;;
+  '-g connection.permissions c show uuid $P') echo 'user:tester' ;;
 esac"
 reset; as_tester '/usr/lib/moarchy/bin/moarchy-data on' >/dev/null
-expect "on writes the setting as root" "$(grep -c "^0 nmcli c modify $U connection.autoconnect yes$" "$LOG")" "1"
-expect "and brings it up as root" "$(grep -c "^0 nmcli --wait 0 c up $U$" "$LOG")" "1"
+expect "on writes the setting as root" "$(grep -c "^0 nmcli c modify uuid $U connection.autoconnect yes$" "$LOG")" "1"
+expect "and brings it up as root" "$(grep -c "^0 nmcli --wait 0 c up uuid $U$" "$LOG")" "1"
 reset; as_tester '/usr/lib/moarchy/bin/moarchy-data off' >/dev/null
-expect "off writes the setting as root" "$(grep -c "^0 nmcli c modify $U connection.autoconnect no$" "$LOG")" "1"
-expect "and takes it down as root" "$(grep -c "^0 nmcli c down $U$" "$LOG")" "1"
+expect "off writes the setting as root" "$(grep -c "^0 nmcli c modify uuid $U connection.autoconnect no$" "$LOG")" "1"
+expect "and takes it down as root" "$(grep -c "^0 nmcli c down uuid $U$" "$LOG")" "1"
 expect "and the user's own profile is never what it switches" "$(grep -c "^0 nmcli .*c \(modify\|up\|down\) .*$P" "$LOG")" "0"
 mkdir -p /tmp/evil; printf '#!/bin/sh\necho EVIL >>/tmp/evil.log\n' >/tmp/evil/awk; chmod 755 /tmp/evil/awk
 PATH=/tmp/evil:$PATH /usr/lib/moarchy/bin/moarchy-data off >/dev/null 2>&1
@@ -196,7 +196,18 @@ nop $'# provision.sh, kept on upgrade\ntester ALL=(ALL) NOPASSWD: ALL'
 expect "so does the one provision.sh writes" "$(left)" "kept"
 nop 'tester ALL=(ALL) NOPASSWD: /usr/bin/true'
 expect "so does a rule that is not the image's" "$(left)" "kept"
-rm -f /etc/sudoers.d/10-moarchy
+# What the upgrade kept for want of a PIN goes with the first one.
+install -m755 "$REPO/bin/moarchy-pin" /usr/lib/moarchy/bin/moarchy-pin
+install -d /var/lib/moarchy
+first() { rm -f /var/lib/moarchy/pin-set; passwd -l tester >/dev/null; nop 'tester ALL=(ALL) NOPASSWD: ALL'
+          as_tester 'printf "135790\n" | sudo -n /usr/lib/moarchy/bin/moarchy-pin first' >/dev/null
+          echo "$? $([ -e /etc/sudoers.d/10-moarchy ] && echo kept || echo gone)"; }
+expect "the first PIN takes the image's line with it" "$(first)" "0 gone"
+expect "and sudo then asks for that PIN" "$(as_tester 'sudo -n true' >/dev/null; echo $?) $(as_tester 'printf "135790\n" | sudo -S -k -p "" true'; echo $?)" "1 0"
+touch /etc/moarchy-debug-image
+expect "a dev image keeps it past the first PIN" "$(first)" "0 kept"
+rm -f /etc/moarchy-debug-image /var/lib/moarchy/pin-set /etc/sudoers.d/10-moarchy
+printf 'tester:246813\n' | chpasswd
 
 if [[ $fail -gt 0 ]]; then
   echo "$fail failed"

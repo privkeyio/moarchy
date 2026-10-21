@@ -52,7 +52,7 @@ _conn_uuid() {
   rows=$("$NMCLI" -t -f UUID,TYPE,ACTIVE c show 2>/dev/null | awk -F: '$2=="gsm"')
   while IFS= read -r row; do
     [ -n "$row" ] || continue
-    [ -z "$("$NMCLI" -g connection.permissions c show "${row%%:*}" 2>/dev/null)" ] &&
+    [ -z "$("$NMCLI" -g connection.permissions c show uuid "${row%%:*}" 2>/dev/null)" ] &&
       out+="$row"$'\n'
   done <<<"$rows"
   rows=${out%$'\n'}
@@ -103,7 +103,7 @@ status() {
   if uuid=$(_conn_uuid); then
     # -t -f is the only honest way to read one property: the human table pads
     # the value and `grep -o yes` would match the word anywhere in the row.
-    case "$("$NMCLI" -t -f connection.autoconnect c show "$uuid" 2>/dev/null | cut -d: -f2)" in
+    case "$("$NMCLI" -t -f connection.autoconnect c show uuid "$uuid" 2>/dev/null | cut -d: -f2)" in
       yes) enabled=yes ;;
     esac
   fi
@@ -181,21 +181,21 @@ status() {
 on() {
   local uuid
   uuid=$(_conn_uuid) || { echo "no gsm connection profile to turn on" >&2; return 1; }
-  _nm_root c modify "$uuid" connection.autoconnect yes >/dev/null
+  _nm_root c modify uuid "$uuid" connection.autoconnect yes >/dev/null
   # `c up` and not `d connect`: an explicit `nmcli c down` marks the DEVICE as
   # manually disconnected, and bringing the connection up is what clears that
   # block as well as starting the bearer.
-  _nm_root --wait 0 c up "$uuid" >/dev/null
+  _nm_root --wait 0 c up uuid "$uuid" >/dev/null
 }
 
 off() {
   local uuid
   uuid=$(_conn_uuid) || { echo "no gsm connection profile to turn off" >&2; return 1; }
-  _nm_root c modify "$uuid" connection.autoconnect no >/dev/null
+  _nm_root c modify uuid "$uuid" connection.autoconnect no >/dev/null
   # A profile that is not up is not an error here. `nmcli c down` on an
   # inactive connection answers "not an active connection", which is true and
   # is not a failure of "turn data off" -- it is already off.
-  _nm_root c down "$uuid" >/dev/null 2>&1 || true
+  _nm_root c down uuid "$uuid" >/dev/null 2>&1 || true
 }
 
 usage() {
