@@ -34,7 +34,7 @@ upstream's dmenu. Ten rows:
 
 ```
 Settings
-├─ Network & internet   Private DNS · Wi-Fi networks · Bluetooth devices · Wi-Fi QR
+├─ Network & internet   Private DNS · Wi-Fi networks · Bluetooth devices
 ├─ Display              Night light · Stay awake
 ├─ Sound & notifications Output device · Input device · Crash capture
 ├─ Appearance           Theme · Wallpaper · Font · Status bar · Get more
@@ -887,7 +887,7 @@ guard forks nothing. F3 and F5 exist because a fork on this SoC costs more than
 the test inside it, and a search field runs on every keystroke.
 → with `omarchy-cmd-present` off PATH no guarded row appears in `app drawer
 results`; with `bash` wrapped in a counting stub, `app-drawer type screenshot`
-leaves the count at 0 and `app-drawer type qr` raises it by exactly 1
+leaves the count at 0 and `app-drawer type sim` raises it by exactly 1
 
 **O8** A row carrying `confirm` shows Settings with the question armed rather
 than acting on it. The quiet path is for rows that were going to run anyway, and
@@ -919,9 +919,9 @@ what is not in the tree cannot be found in the tree -- so the check is that the
 inheritance holds.
 
 The row types matter, and H1's own regex applied flatly does not work here: it
-catches four rows that are all correct. "Wi-Fi networks" and "Bluetooth devices"
-are the two configuration screens H1 already exempts, "Wi-Fi QR code" is a
-screen, and `system.hardware`'s Wi-Fi and Bluetooth restart an adapter. None of
+catches three rows that are all correct. "Wi-Fi networks" and "Bluetooth devices"
+are the two configuration screens H1 already exempts, and `system.hardware`'s
+Wi-Fi and Bluetooth restart an adapter. None of
 them is a radio. What would break H1 is a row that *sets* one, and those are
 `switch` and `choice`.
 → no `switch` or `choice` row in the index has a label matching

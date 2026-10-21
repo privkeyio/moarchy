@@ -228,7 +228,7 @@ Native 25 · Bridged 14 · Unsupported 23
 | `setup.network.dns.cloudflare` | Cloudflare | Native | Network > Private DNS |  |
 | `setup.network.dns.google` | Google | Native | Network > Private DNS |  |
 | `setup.network.dns.custom` | Custom | Bridged | Network > Private DNS | bridged write inside a native radio group; the tick still comes from `omarchy-dns` |
-| `setup.network.qr` | QR Code | Bridged | Network & internet > Wi-Fi QR code | `omarchy-shell shell summon omarchy.wifiqr`; upstream `when` kept |
+| `setup.network.qr` | QR Code | Unsupported | -- | reading the saved passphrase asks for the PIN (`docs/structure.md` I8), and upstream's panel is a full-screen layer that holds the keyboard, so the PIN dialog under it cannot be typed into. Comes back with a screen that asks first |
 | `setup.default` | Defaults | Native | Apps & defaults > Default apps |  |
 | `setup.default.agent` | Agent | Native | Default apps > AI agent | unguarded, like upstream. It was guarded on the disjunction of the page's nine, which hid the only screen that installs one (`docs/settings.md` F8) |
 | `setup.default.agent.claude` | Claude | Native | Default apps > AI agent | radio row and installer: the tap runs `moarchy-agent open <name>`, which writes the one app drawer tile (rewritten, never added to) and hands off to `omarchy-default-agent`. On PATH from first boot as a mise wrapper, like all nine |

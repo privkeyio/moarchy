@@ -219,6 +219,15 @@ mkdir -p $W/r/usr/lib/userdb
 printf 'sudoers: files\n' >> $W/r/etc/nsswitch.conf
 # 43. network settings with no PIN again
 rm -f $W/r/usr/share/polkit-1/rules.d/49-moarchy-networkmanager.rules
+# 44. a sudoers file at boot, its path spelled with an escape
+printf 'f /etc/sud\\x6fers.d/99-z 0440 root root - moarchy ALL=(ALL) NOPASSWD: ALL\n' > $W/r/usr/lib/tmpfiles.d/zz-escape.conf
+# 45. one line's link carrying the next one's file into sudoers.d
+printf 'L /etc/zz-x - - - - /etc/sudoers.d\nf /etc/zz-x/99-w 0440 root root - moarchy ALL=(ALL) NOPASSWD: ALL\n' \
+  > $W/r/usr/lib/tmpfiles.d/zz-link.conf
+# 46. upstream's boot cleanup of timed passwordless sudo masked from /etc
+: > $W/r/etc/tmpfiles.d/omarchy-nopasswd-sudo.conf
+# 47. a packaged tmpfiles file replaced by a link to /dev/null
+ln -sf /dev/null $W/r/usr/lib/tmpfiles.d/sudo.conf
 umount $W/r
 
 echo "==> re-sparsing"
@@ -292,12 +301,17 @@ catches "sudoers omarchy-dns is not exactly its rules" "a widened DNS rule"
 catches "sudoers omarchy-tzupdate is 444" "a sudoers file with the wrong mode"
 catches "the store's own policy is not auth_self_keep" "the store with no PIN in its own policy"
 catches "the empower group has members.*user eve" "an account whose own group is empower"
-catches "boot-time writes this image does not ship:.*/usr/lib/tmpfiles.d/zz-polkit.conf: f /run/polkit-1" "a polkit rule written at boot"
-catches "boot-time writes this image does not ship:.*/usr/local/lib/tmpfiles.d/zz-specifier.conf: f %t/polkit-1" \
-                                        "a polkit rule written at boot through %t"
-catches "boot-time writes this image does not ship:.*/etc/tmpfiles.d/zz-sudo.conf: f /etc/sudoers.d/99-x" \
-                                        "a sudoers file written at boot"
+catches "boot-time writes this image does not ship:.*> zz-polkit.conf: f /run/polkit-1" "a polkit rule written at boot"
+catches "override or replace the packages' own:.*/usr/local/lib/tmpfiles.d/zz-specifier.conf" \
+                                        "a polkit rule written at boot from /usr/local/lib"
+catches "override or replace the packages' own:.*/etc/tmpfiles.d/zz-sudo.conf" "a sudoers file written at boot from /etc"
 catches "boot-time group members this image does not ship:.*zz-empower.conf: m moarchy empower" "the user put in empower at boot"
+catches "boot-time writes this image does not ship:.*> zz-escape.conf: f /etc/sud.x6fers.d/99-z" \
+                                        "a sudoers file at boot spelled with an escape"
+catches "boot-time writes this image does not ship:.*> zz-link.conf: L /etc/zz-x" "a link carrying a file into sudoers.d"
+catches "override or replace the packages' own:.*/etc/tmpfiles.d/omarchy-nopasswd-sudo.conf" \
+                                        "the timed sudo cleanup masked from /etc"
+catches "override or replace the packages' own:.*/usr/lib/tmpfiles.d/sudo.conf" "a packaged tmpfiles file linked to /dev/null"
 catches "userdb records this image does not ship: /usr/lib/userdb/moarchy:empower.membership" "the user put in empower through userdb"
 catches "nsswitch.conf is not the filesystem package's own" "sudo's rules from another source"
 catches "polkit rules differ from the reviewed set:.*< [0-9a-f]*  49-moarchy-networkmanager.rules" \

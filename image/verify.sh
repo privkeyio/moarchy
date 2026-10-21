@@ -595,7 +595,7 @@ grep -qx 'r! /etc/sudoers.d/99-omarchy-nopasswd-\*' "$R/usr/lib/tmpfiles.d/omarc
 # reviewed before it is added here. NetworkManager's answers yes for wheel
 # (system connections, from a local session); moarchy's 49- sorts ahead of it
 # and asks for the PIN instead.
-_polkit_want="0f516ee82b84282f278bd1bd5c28f35b53cfda78b0a9bdcabfba55206ee32cd9  49-moarchy-networkmanager.rules
+_polkit_want="225d030451c2135f476ab1fd4a4821901d4a67e08684e77ce848d3448f5351bd  49-moarchy-networkmanager.rules
 4192b104907809623aa7ca4c58e1527da19710bae6278abe96f88d9f2d6430e9  50-default.rules
 d9a62ab1ec477a4be1657769dfd194c75d1a07a4357e7717aa19ad5c07c3fc26  empower.rules
 392e205d6b993b8e629c35ddd2307ad8460bd41ff893801028c2e530fe816567  org.freedesktop.GeoClue2.rules
@@ -624,43 +624,40 @@ _polkit_yes=$(awk '/<action id=/ { id = $0; sub(/.*<action id="/, "", id); sub(/
   diff "$_here/polkit-yes-actions" - | grep '^[<>]' | tr '\n' ' ')
 [ -z "$_polkit_yes" ] && ok "polkit allows without asking only the reviewed actions" \
   || no "polkit actions allowed without asking differ from image/polkit-yes-actions: $_polkit_yes"
-# Nor written at boot: every tmpfiles line that touches sudo, polkit, userdb or
-# the account files, from every directory tmpfiles reads, with %t and /var/run
-# taken as /run, against the reviewed set. And every sysusers line that adds a
-# group member or names wheel or empower. A unit's own ExecStart can still
-# write such a file; nothing here reads what units run.
-_tmpfiles_want='/usr/lib/tmpfiles.d/20-systemd-userdb.conf: L /etc/ssh/sshd_config.d/20-systemd-userdb.conf - - - - /usr/lib/systemd/sshd_config.d/20-systemd-userdb.conf
-/usr/lib/tmpfiles.d/arch.conf: C /etc/group
-/usr/lib/tmpfiles.d/arch.conf: C /etc/gshadow
-/usr/lib/tmpfiles.d/arch.conf: C /etc/nsswitch.conf
-/usr/lib/tmpfiles.d/arch.conf: C /etc/passwd
-/usr/lib/tmpfiles.d/arch.conf: C /etc/shadow
-/usr/lib/tmpfiles.d/etc.conf: C! /etc/nsswitch.conf - - - -
-/usr/lib/tmpfiles.d/etc.conf: C! /etc/pam.d - - - -
-/usr/lib/tmpfiles.d/omarchy-nopasswd-sudo.conf: r! /etc/sudoers.d/99-omarchy-nopasswd-*
-/usr/lib/tmpfiles.d/openssh.conf: C /etc/pam.d/sshd
-/usr/lib/tmpfiles.d/polkit-tmpfiles.conf: d /etc/polkit-1/rules.d 0750 root polkitd - -
-/usr/lib/tmpfiles.d/sudo.conf: D /run/sudo/ts 0700 root root
-/usr/lib/tmpfiles.d/sudo.conf: d /run/sudo 0711 root root'
-_tmpfiles_have=$(for d in etc/tmpfiles.d run/tmpfiles.d usr/local/lib/tmpfiles.d usr/lib/tmpfiles.d; do
-    for f in "$R/$d"/*.conf; do [ -f "$f" ] && printf '%s\0' "$f"; done; done |
-  xargs -0r awk -v r="$R" '/^[ \t]*(#|$)/ { next }
-    { p = $2; gsub(/^"|"$/, "", p); sub(/^%t/, "/run", p); sub(/^\/var\/run/, "/run", p)
-      if (p ~ /polkit|userdb|sudo/ || p ~ /^\/etc\/(passwd|group|shadow|gshadow|nsswitch\.conf|pam\.d)/ || p ~ /\.\./ || p ~ /^%/) {
-        f = substr(FILENAME, length(r) + 1); $1 = $1; print f ": " $0 } }' | LC_ALL=C sort)
-[ "$_tmpfiles_have" = "$_tmpfiles_want" ] && ok "boot writes nothing to sudo, polkit or the accounts beyond the reviewed set" \
-  || no "boot-time writes this image does not ship: $(diff <(echo "$_tmpfiles_want") <(echo "$_tmpfiles_have") | grep '^[<>]' | tr '\n' '|')"
-_sysusers_want='/usr/lib/sysusers.d/arch.conf: m bin daemon
-/usr/lib/sysusers.d/arch.conf: m bin sys
-/usr/lib/sysusers.d/arch.conf: m daemon adm
-/usr/lib/sysusers.d/arch.conf: m daemon bin
-/usr/lib/sysusers.d/arch.conf: m root root
-/usr/lib/sysusers.d/basic.conf: g empower - - -
-/usr/lib/sysusers.d/basic.conf: g wheel - - -'
-_sysusers_have=$(for d in etc/sysusers.d run/sysusers.d usr/local/lib/sysusers.d usr/lib/sysusers.d; do
-    for f in "$R/$d"/*.conf; do [ -f "$f" ] && printf '%s\0' "$f"; done; done |
-  xargs -0r awk -v r="$R" '/^[ \t]*(#|$)/ { next }
-    $1 == "m" || /empower|wheel/ { f = substr(FILENAME, length(r) + 1); $1 = $1; print f ": " $0 }' | LC_ALL=C sort)
+# Nor written at boot. tmpfiles and sysusers read /etc, /run and
+# /usr/local/lib before /usr/lib, and a file there masks the packaged one of
+# the same name, an empty one or a link to /dev/null included, so those
+# directories hold nothing and /usr/lib's entries are plain files. Then every
+# tmpfiles line that touches sudo, polkit, userdb or the account files in any
+# of its fields is held to image/tmpfiles-reviewed: a quote, a specifier, an
+# escape or a .. counts as touching them, since tmpfiles decodes all four
+# (\x6f is an o), and one line's link can carry the next one's path anywhere.
+# Every sysusers line that adds a group member or names wheel or empower is
+# held to the list below. A unit's own ExecStart can still write such a file;
+# nothing here reads what units run.
+_boot_over=$(for d in etc run usr/local/lib; do find "$R/$d/tmpfiles.d" "$R/$d/sysusers.d" -mindepth 1 2>/dev/null; done
+             find "$R/usr/lib/tmpfiles.d" "$R/usr/lib/sysusers.d" -mindepth 1 ! -type f 2>/dev/null)
+_boot_over=$(printf '%s\n' "$_boot_over" | sed "s|^$R||" | tr '\n' ' ' | sed 's/ *$//')
+[ -z "$_boot_over" ] && ok "tmpfiles and sysusers read only the packages' own files" \
+  || no "tmpfiles or sysusers files that override or replace the packages' own: $_boot_over"
+_tmpfiles_have=$(find "$R/usr/lib/tmpfiles.d" -maxdepth 1 -type f -name '*.conf' -print0 2>/dev/null |
+  xargs -0r awk '/^[ \t]*(#|$)/ { next }
+    { l = $0; gsub(/\/var\/run/, "/run", l)
+      if (l ~ /[\\%"]/ || l ~ /polkit|userdb|sudo/ || l ~ /\/etc\/(passwd|group|shadow|gshadow|nsswitch\.conf|pam\.d)/ || l ~ /\.\./) {
+        f = FILENAME; sub(/.*\//, "", f); $1 = $1; print f ": " $0 } }' | LC_ALL=C sort)
+_tmpfiles_bad=$(diff "$_here/tmpfiles-reviewed" <(printf '%s\n' "$_tmpfiles_have") | grep '^[<>]' | tr '\n' '|')
+[ -z "$_tmpfiles_bad" ] && ok "boot writes nothing to sudo, polkit or the accounts beyond image/tmpfiles-reviewed" \
+  || no "boot-time writes this image does not ship: $_tmpfiles_bad"
+_sysusers_want='arch.conf: m bin daemon
+arch.conf: m bin sys
+arch.conf: m daemon adm
+arch.conf: m daemon bin
+arch.conf: m root root
+basic.conf: g empower - - -
+basic.conf: g wheel - - -'
+_sysusers_have=$(find "$R/usr/lib/sysusers.d" -maxdepth 1 -type f -name '*.conf' -print0 2>/dev/null |
+  xargs -0r awk '/^[ \t]*(#|$)/ { next }
+    $1 == "m" || /empower|wheel/ { f = FILENAME; sub(/.*\//, "", f); $1 = $1; print f ": " $0 }' | LC_ALL=C sort)
 [ "$_sysusers_have" = "$_sysusers_want" ] && ok "boot adds no account to a group beyond the reviewed set" \
   || no "boot-time group members this image does not ship: $(diff <(echo "$_sysusers_want") <(echo "$_sysusers_have") | grep '^[<>]' | tr '\n' '|')"
 # systemd's userdb, which nsswitch.conf reads after the files: one drop-in

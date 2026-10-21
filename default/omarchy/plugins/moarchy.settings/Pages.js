@@ -158,8 +158,7 @@ var PAGES = {
     launch: "none" },
   // Shown only while the SIM is actually asking for something, because a row
   // that says "SIM PIN" on a phone with no SIM, or one already unlocked, is a
-  // row you learn to scroll past. `when` is the same mechanism the QR row
-  // below uses.
+  // row you learn to scroll past.
   { id: "sim", type: "action", glyph: "󰯙", label: "Unlock SIM",
     // `blocking`, not `lock`: a working phone reports lock=sim-pin2 (PIN2
     // guards fixed dialling, not the SIM), and a substring match on "sim-p"
@@ -167,11 +166,11 @@ var PAGES = {
     when: "[[ $(moarchy-sim status) == *blocking=yes* ]]",
     keywords: "sim pin puk unlock modem cellular mobile carrier",
     run: "omarchy-shell shell summon moarchy.sim '{\"returnTo\":\"moarchy.settings\",\"page\":\"net\"}'",
-    launch: "none" },
-  { id: "qr", type: "action", glyph: "󰐲", label: "Wi-Fi QR code",
-    when: "[[ $(omarchy-network-status) == wifi* ]]",
-    run: "omarchy-shell shell summon omarchy.wifiqr", launch: "none",
-    covers: { "setup.network.qr": "B" } }
+    launch: "none" }
+  // No Wi-Fi QR code: upstream's reads the saved passphrase, which asks for
+  // the PIN (default/polkit/49-moarchy-networkmanager.rules), from under a
+  // full-screen layer that holds the keyboard, so the PIN dialog cannot be
+  // typed into (docs/menu-coverage.md).
 ]},
 
 "net.dns": { title: "Private DNS", reader: "omarchy-dns", rows: [

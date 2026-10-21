@@ -333,7 +333,7 @@ Item {
   // password" at a network that was simply out of range would send someone to
   // retype a passphrase that was right.
   //
-  // Saving a network asks for the PIN first (default/polkit/
+  // Joining a network asks for the PIN first (default/polkit/
   // 49-moarchy-networkmanager.rules), and a dismissed PIN dialog is one more
   // way to end up here, so the time allowed covers typing it.
   Timer {

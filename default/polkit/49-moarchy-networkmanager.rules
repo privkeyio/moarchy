@@ -9,13 +9,19 @@
 // across its directories and the first answer wins, so this one, sorting
 // first, decides.
 //
+// network-control too, which NetworkManager's policy answers yes to an active
+// session: it brings up or takes down any connection, and Device.Reapply
+// rewrites the live connection's DNS, routes and addresses without saving
+// them.
+//
 // _KEEP: the process that gave the PIN keeps it for polkit's five minutes, so
-// joining a network asks once. Another process asks for its own. Switching
-// between saved networks and the radios stay network-control and
-// enable-disable-*, which ask nothing.
+// joining or switching networks asks once. Another process asks for its own.
+// Autoconnect is NetworkManager's own and asks nothing, and the radios and
+// scanning (enable-disable-*, wifi.scan) still ask nothing.
 polkit.addRule(function (action, subject) {
   if (action.id == "org.freedesktop.NetworkManager.settings.modify.system" ||
-      action.id == "org.freedesktop.NetworkManager.settings.modify.own") {
+      action.id == "org.freedesktop.NetworkManager.settings.modify.own" ||
+      action.id == "org.freedesktop.NetworkManager.network-control") {
     return polkit.Result.AUTH_ADMIN_KEEP;
   }
 });
