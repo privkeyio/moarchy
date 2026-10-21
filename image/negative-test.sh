@@ -217,6 +217,8 @@ mkdir -p $W/r/usr/lib/userdb
 : > "$W/r/usr/lib/userdb/moarchy:empower.membership"
 # 42. sudo's rules from another source
 printf 'sudoers: files\n' >> $W/r/etc/nsswitch.conf
+# 43. network settings with no PIN again
+rm -f $W/r/usr/share/polkit-1/rules.d/49-moarchy-networkmanager.rules
 umount $W/r
 
 echo "==> re-sparsing"
@@ -298,6 +300,8 @@ catches "boot-time writes this image does not ship:.*/etc/tmpfiles.d/zz-sudo.con
 catches "boot-time group members this image does not ship:.*zz-empower.conf: m moarchy empower" "the user put in empower at boot"
 catches "userdb records this image does not ship: /usr/lib/userdb/moarchy:empower.membership" "the user put in empower through userdb"
 catches "nsswitch.conf is not the filesystem package's own" "sudo's rules from another source"
+catches "polkit rules differ from the reviewed set:.*< [0-9a-f]*  49-moarchy-networkmanager.rules" \
+                                        "network settings changeable with no PIN"
 
 echo
 if [ $rc -ne 0 ]; then ok "verify.sh exited non-zero ($rc)"; else no "verify.sh exited 0 on a broken image"; fi

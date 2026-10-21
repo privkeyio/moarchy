@@ -332,13 +332,17 @@ Item {
   // what it actually knows: it did not come up in time. Guessing "wrong
   // password" at a network that was simply out of range would send someone to
   // retype a passphrase that was right.
+  //
+  // Saving a network asks for the PIN first (default/polkit/
+  // 49-moarchy-networkmanager.rules), and a dismissed PIN dialog is one more
+  // way to end up here, so the time allowed covers typing it.
   Timer {
     id: joinTimeout
-    interval: 25000
+    interval: 60000
     onTriggered: {
       if (root.busySsid === "") return
       root.errorSsid = root.busySsid
-      root.errorText = "Could not join — check the passphrase, or move closer"
+      root.errorText = "Could not join — check the PIN and the passphrase, or move closer"
       root.expandedSsid = root.busySsid
       root.passphrase = ""
       root.showPassphrase = false

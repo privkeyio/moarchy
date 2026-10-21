@@ -1,0 +1,21 @@
+// Changing a saved network asks for the PIN (docs/structure.md I8).
+//
+// NetworkManager's own org.freedesktop.NetworkManager.rules answers yes to
+// wheel in a local session for settings.modify.system, and its policy answers
+// yes to an active session for settings.modify.own. Either lets any app the
+// user runs add, change or delete a connection, so point DNS, proxy and routes
+// elsewhere, and read every saved secret: NetworkManager returns secrets to
+// whoever holds the same permission. polkit runs rules in file name order
+// across its directories and the first answer wins, so this one, sorting
+// first, decides.
+//
+// _KEEP: the process that gave the PIN keeps it for polkit's five minutes, so
+// joining a network asks once. Another process asks for its own. Switching
+// between saved networks and the radios stay network-control and
+// enable-disable-*, which ask nothing.
+polkit.addRule(function (action, subject) {
+  if (action.id == "org.freedesktop.NetworkManager.settings.modify.system" ||
+      action.id == "org.freedesktop.NetworkManager.settings.modify.own") {
+    return polkit.Result.AUTH_ADMIN_KEEP;
+  }
+});

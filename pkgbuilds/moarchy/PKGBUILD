@@ -301,6 +301,7 @@ package() {
          "$pkgdir/usr/share/moarchy/default/omarchy" \
          "$pkgdir/usr/share/moarchy/default/themed" \
          "$pkgdir/usr/share/moarchy/default/pacman-hooks" \
+         "$pkgdir/usr/share/moarchy/default/polkit" \
          "$pkgdir/usr/share/moarchy/default/sudoers" \
          "$pkgdir/usr/share/moarchy/default/tmpfiles" \
          "$pkgdir/usr/share/moarchy/default/udev" \
@@ -510,6 +511,11 @@ package() {
   install -d "$pkgdir/usr/lib/systemd/system/sysinit.target.wants"
   ln -s ../moarchy-harden-auth.service \
     "$pkgdir/usr/lib/systemd/system/sysinit.target.wants/moarchy-harden-auth.service"
+  # Changing a saved network asks for the PIN, ahead of NetworkManager's own
+  # rule that lets wheel do it with none. /usr/share, not /etc: this is a
+  # package's rule, and /etc/polkit-1/rules.d stays free for the owner.
+  install -Dm644 "$_repo/default/polkit/49-moarchy-networkmanager.rules" \
+    "$pkgdir/usr/share/polkit-1/rules.d/49-moarchy-networkmanager.rules"
   # The PIN's count, and polkit's sandboxed agent helper allowed to write it.
   install -Dm644 "$_repo/default/tmpfiles/moarchy-pin.conf" "$pkgdir/usr/lib/tmpfiles.d/moarchy-pin.conf"
   install -Dm644 "$_repo/default/systemd/polkit-agent-helper@.service.d/50-moarchy-pin.conf" \

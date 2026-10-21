@@ -592,9 +592,11 @@ grep -qx 'r! /etc/sudoers.d/99-omarchy-nopasswd-\*' "$R/usr/lib/tmpfiles.d/omarc
   || no "nothing removes Settings' timed passwordless sudo at boot -- a reboot inside it keeps it"
 # polkit's rules, byte for byte the ones the packages ship: a rule can answer
 # yes for anything, the store and pkexec among them, so a changed or new one is
-# reviewed before it is added here. Only NetworkManager's answers yes for
-# wheel (system connections, from a local session).
-_polkit_want="4192b104907809623aa7ca4c58e1527da19710bae6278abe96f88d9f2d6430e9  50-default.rules
+# reviewed before it is added here. NetworkManager's answers yes for wheel
+# (system connections, from a local session); moarchy's 49- sorts ahead of it
+# and asks for the PIN instead.
+_polkit_want="0f516ee82b84282f278bd1bd5c28f35b53cfda78b0a9bdcabfba55206ee32cd9  49-moarchy-networkmanager.rules
+4192b104907809623aa7ca4c58e1527da19710bae6278abe96f88d9f2d6430e9  50-default.rules
 d9a62ab1ec477a4be1657769dfd194c75d1a07a4357e7717aa19ad5c07c3fc26  empower.rules
 392e205d6b993b8e629c35ddd2307ad8460bd41ff893801028c2e530fe816567  org.freedesktop.GeoClue2.rules
 088713232069609bfc9573bbb1d8cb723963064bb6a6957933db72d0765fe31e  org.freedesktop.NetworkManager.rules
