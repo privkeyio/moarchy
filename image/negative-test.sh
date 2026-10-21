@@ -204,6 +204,19 @@ printf 'eve:x:1500:%s::/:/usr/bin/nologin\n' "$(awk -F: '$1 == "empower" { print
 # 37. a tmpfiles rule writing a polkit rule at boot
 printf 'f /run/polkit-1/rules.d/00-x.rules 0644 root root - polkit.addRule(function () { return "yes"; });\n' \
   > $W/r/usr/lib/tmpfiles.d/zz-polkit.conf
+# 38. the same through a specifier, from another directory tmpfiles reads
+mkdir -p $W/r/usr/local/lib/tmpfiles.d
+printf 'f %%t/polkit-1/rules.d/00-y.rules 0644 root root - polkit.addRule(function () { return "yes"; });\n' \
+  > $W/r/usr/local/lib/tmpfiles.d/zz-specifier.conf
+# 39. a sudoers file that only exists once tmpfiles has run
+printf 'f /etc/sudoers.d/99-x 0440 root root - moarchy ALL=(ALL) NOPASSWD: ALL\n' > $W/r/etc/tmpfiles.d/zz-sudo.conf
+# 40. the user put in empower at boot
+printf 'm moarchy empower\n' > $W/r/usr/lib/sysusers.d/zz-empower.conf
+# 41. the user put in empower through systemd's userdb
+mkdir -p $W/r/usr/lib/userdb
+: > "$W/r/usr/lib/userdb/moarchy:empower.membership"
+# 42. sudo's rules from another source
+printf 'sudoers: files\n' >> $W/r/etc/nsswitch.conf
 umount $W/r
 
 echo "==> re-sparsing"
@@ -277,7 +290,14 @@ catches "sudoers omarchy-dns is not exactly its rules" "a widened DNS rule"
 catches "sudoers omarchy-tzupdate is 444" "a sudoers file with the wrong mode"
 catches "the store's own policy is not auth_self_keep" "the store with no PIN in its own policy"
 catches "the empower group has members.*user eve" "an account whose own group is empower"
-catches "tmpfiles rules write polkit's /run: /usr/lib/tmpfiles.d/zz-polkit.conf" "a polkit rule written at boot"
+catches "boot-time writes this image does not ship:.*/usr/lib/tmpfiles.d/zz-polkit.conf: f /run/polkit-1" "a polkit rule written at boot"
+catches "boot-time writes this image does not ship:.*/usr/local/lib/tmpfiles.d/zz-specifier.conf: f %t/polkit-1" \
+                                        "a polkit rule written at boot through %t"
+catches "boot-time writes this image does not ship:.*/etc/tmpfiles.d/zz-sudo.conf: f /etc/sudoers.d/99-x" \
+                                        "a sudoers file written at boot"
+catches "boot-time group members this image does not ship:.*zz-empower.conf: m moarchy empower" "the user put in empower at boot"
+catches "userdb records this image does not ship: /usr/lib/userdb/moarchy:empower.membership" "the user put in empower through userdb"
+catches "nsswitch.conf is not the filesystem package's own" "sudo's rules from another source"
 
 echo
 if [ $rc -ne 0 ]; then ok "verify.sh exited non-zero ($rc)"; else no "verify.sh exited 0 on a broken image"; fi

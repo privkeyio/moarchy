@@ -520,24 +520,25 @@ _oth=$(grep -ls 'moarchy-pin' "$R/etc/sudoers" "$R"/etc/sudoers.d/* | grep -vxF 
 # Bytes rather than rules: what sudo takes for a comment is its parser's call,
 # and `#-1,%wheel ...` is a rule that reads as one.
 _sha() { sha256sum <"$1" | cut -d' ' -f1; }
-# <name> <the repo file it is, or its sha256>
+# <name> <its sha256>
 _want_sudoers() {
   local f="$R/etc/sudoers.d/$1" want=$2
   if [ ! -f "$f" ]; then no "/etc/sudoers.d/$1 missing"; return; fi
-  [ -f "$want" ] && want=$(_sha "$want")
   if [ "$(_sha "$f")" = "$want" ]; then ok "sudoers $1 is exactly the file shipped"
   else no "sudoers $1 is not exactly its rules -- a widened rule is root without a PIN"; fi
   [ "$(stat -c '%a %u %g' "$f")" = "440 0 0" ] || no "sudoers $1 is $(stat -c '%a %U:%G' "$f"), not 0440 root:root"
 }
-_want_sudoers 00-moarchy-wheel /repo/default/sudoers/00-moarchy-wheel
-_want_sudoers 30-moarchy-grants /repo/default/sudoers/30-moarchy-grants
+# Pinned here rather than read from the tree being checked, so widening one
+# also means changing this file, in front of review.
+_want_sudoers 00-moarchy-wheel b6bb7b5a26e591ee2304af7989fd874bfffc0ce3f5ede142066067b6dc185e9e
+_want_sudoers 30-moarchy-grants c61c8dad1750ed485ebee42a62174232356c2380a7d42fb2edebd473030b2a20
 # Upstream's, at the pinned omarchy ref.
 _want_sudoers omarchy-theme-browser b2981edf2d79674071fe747c7de23233a0c82afae24054aa37efa72065544d41
 _want_sudoers omarchy-dns 682b4fa259e09966045373448f4c6c2979aabba8f3605f9ffed15a44ff29a7b1
 _want_sudoers omarchy-tzupdate 1165973dd928175065693584be95f6ed0ef5e2c9dfeebd9790f1f3ea94a0fe05
 _known=" 00-moarchy-wheel 20-moarchy-pin 30-moarchy-grants omarchy-theme-browser omarchy-dns omarchy-tzupdate "
 if [ -e "$R/usr/lib/moarchy/bin/moarchy-android-launch" ]; then
-  _want_sudoers moarchy-android-launch /repo/pkgbuilds/moarchy-waydroid/moarchy-android-launch.sudoers
+  _want_sudoers moarchy-android-launch c2c661d9740e8038e7bfa18813994196897fcbff7c60c9e4a973450ebaee8eeb
   _known="$_known moarchy-android-launch "
 fi
 # Passwordless sudo is a dev image's alone.
@@ -564,8 +565,11 @@ _extra=$(for f in "$R"/etc/sudoers.d/*; do [ -e "$f" ] || [ -L "$f" ] || continu
 [ -f "$R/etc/sudo.conf" ] && [ "$(_sha "$R/etc/sudo.conf")" = f688ac6620d09e5bf2a2adf0654cae38f3330a9220a25a529fb0eacd8d8f22f0 ] \
   && ok "sudo.conf is the sudo package's own, so sudo reads /etc/sudoers" \
   || no "sudo.conf is not the sudo package's own"
-grep -qE '^[[:space:]]*sudoers[[:space:]]*:' "$R/etc/nsswitch.conf" 2>/dev/null &&
-  no "nsswitch.conf gives sudo another source of rules" || ok "nsswitch.conf gives sudo no other source of rules"
+# Where sudo's rules and every account's groups come from: files, then
+# systemd's userdb, whose drop-ins must not exist (below).
+[ -f "$R/etc/nsswitch.conf" ] && [ "$(_sha "$R/etc/nsswitch.conf")" = c8ee7a9faf798caab178ec51afae4146f1efd8a716b7acedf28345b6c75f9697 ] \
+  && ok "nsswitch.conf is the filesystem package's own" \
+  || no "nsswitch.conf is not the filesystem package's own -- sudo or group membership may come from elsewhere"
 # What each no-PIN rule runs, and the directories it is in: root's to write
 # alone, or the rule hands root to whoever can rewrite it.
 _tgt_bad=""
@@ -618,9 +622,49 @@ _polkit_yes=$(awk '/<action id=/ { id = $0; sub(/.*<action id="/, "", id); sub(/
   diff "$_here/polkit-yes-actions" - | grep '^[<>]' | tr '\n' ' ')
 [ -z "$_polkit_yes" ] && ok "polkit allows without asking only the reviewed actions" \
   || no "polkit actions allowed without asking differ from image/polkit-yes-actions: $_polkit_yes"
-# Nor written there at boot.
-_polkit_run=$(awk '!/^[ \t]*#/ && $2 ~ /^\/run\/polkit-1/ { print FILENAME }' "$R"/usr/lib/tmpfiles.d/*.conf "$R"/etc/tmpfiles.d/*.conf 2>/dev/null | sed "s|^$R||" | sort -u | tr '\n' ' ')
-[ -z "$_polkit_run" ] && ok "no tmpfiles rule writes polkit's /run" || no "tmpfiles rules write polkit's /run: $_polkit_run"
+# Nor written at boot: every tmpfiles line that touches sudo, polkit, userdb or
+# the account files, from every directory tmpfiles reads, with %t and /var/run
+# taken as /run, against the reviewed set. And every sysusers line that adds a
+# group member or names wheel or empower. A unit's own ExecStart can still
+# write such a file; nothing here reads what units run.
+_tmpfiles_want='/usr/lib/tmpfiles.d/20-systemd-userdb.conf: L /etc/ssh/sshd_config.d/20-systemd-userdb.conf - - - - /usr/lib/systemd/sshd_config.d/20-systemd-userdb.conf
+/usr/lib/tmpfiles.d/arch.conf: C /etc/group
+/usr/lib/tmpfiles.d/arch.conf: C /etc/gshadow
+/usr/lib/tmpfiles.d/arch.conf: C /etc/nsswitch.conf
+/usr/lib/tmpfiles.d/arch.conf: C /etc/passwd
+/usr/lib/tmpfiles.d/arch.conf: C /etc/shadow
+/usr/lib/tmpfiles.d/etc.conf: C! /etc/nsswitch.conf - - - -
+/usr/lib/tmpfiles.d/etc.conf: C! /etc/pam.d - - - -
+/usr/lib/tmpfiles.d/omarchy-nopasswd-sudo.conf: r! /etc/sudoers.d/99-omarchy-nopasswd-*
+/usr/lib/tmpfiles.d/openssh.conf: C /etc/pam.d/sshd
+/usr/lib/tmpfiles.d/polkit-tmpfiles.conf: d /etc/polkit-1/rules.d 0750 root polkitd - -
+/usr/lib/tmpfiles.d/sudo.conf: D /run/sudo/ts 0700 root root
+/usr/lib/tmpfiles.d/sudo.conf: d /run/sudo 0711 root root'
+_tmpfiles_have=$(for d in etc/tmpfiles.d run/tmpfiles.d usr/local/lib/tmpfiles.d usr/lib/tmpfiles.d; do
+    for f in "$R/$d"/*.conf; do [ -f "$f" ] && printf '%s\0' "$f"; done; done |
+  xargs -0r awk -v r="$R" '/^[ \t]*(#|$)/ { next }
+    { p = $2; gsub(/^"|"$/, "", p); sub(/^%t/, "/run", p); sub(/^\/var\/run/, "/run", p)
+      if (p ~ /polkit|userdb|sudo/ || p ~ /^\/etc\/(passwd|group|shadow|gshadow|nsswitch\.conf|pam\.d)/ || p ~ /\.\./ || p ~ /^%/) {
+        f = substr(FILENAME, length(r) + 1); $1 = $1; print f ": " $0 } }' | LC_ALL=C sort)
+[ "$_tmpfiles_have" = "$_tmpfiles_want" ] && ok "boot writes nothing to sudo, polkit or the accounts beyond the reviewed set" \
+  || no "boot-time writes this image does not ship: $(diff <(echo "$_tmpfiles_want") <(echo "$_tmpfiles_have") | grep '^[<>]' | tr '\n' '|')"
+_sysusers_want='/usr/lib/sysusers.d/arch.conf: m bin daemon
+/usr/lib/sysusers.d/arch.conf: m bin sys
+/usr/lib/sysusers.d/arch.conf: m daemon adm
+/usr/lib/sysusers.d/arch.conf: m daemon bin
+/usr/lib/sysusers.d/arch.conf: m root root
+/usr/lib/sysusers.d/basic.conf: g empower - - -
+/usr/lib/sysusers.d/basic.conf: g wheel - - -'
+_sysusers_have=$(for d in etc/sysusers.d run/sysusers.d usr/local/lib/sysusers.d usr/lib/sysusers.d; do
+    for f in "$R/$d"/*.conf; do [ -f "$f" ] && printf '%s\0' "$f"; done; done |
+  xargs -0r awk -v r="$R" '/^[ \t]*(#|$)/ { next }
+    $1 == "m" || /empower|wheel/ { f = substr(FILENAME, length(r) + 1); $1 = $1; print f ": " $0 }' | LC_ALL=C sort)
+[ "$_sysusers_have" = "$_sysusers_want" ] && ok "boot adds no account to a group beyond the reviewed set" \
+  || no "boot-time group members this image does not ship: $(diff <(echo "$_sysusers_want") <(echo "$_sysusers_have") | grep '^[<>]' | tr '\n' '|')"
+# systemd's userdb, which nsswitch.conf reads after the files: one drop-in
+# named user:group.membership is a group member, empower's included.
+_userdb=$(for d in etc/userdb run/userdb run/host/userdb usr/lib/userdb usr/local/lib/userdb; do find "$R/$d" -mindepth 1 2>/dev/null; done | sed "s|^$R||" | tr '\n' ' ')
+[ -z "$_userdb" ] && ok "no userdb records" || no "userdb records this image does not ship: $_userdb"
 # empower.rules answers yes for everything to that group, whether it is an
 # account's own group or one it is listed in.
 _emp_gid=$(awk -F: '$1 == "empower" { print $3 }' "$R/etc/group")
