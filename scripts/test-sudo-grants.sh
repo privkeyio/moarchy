@@ -192,6 +192,8 @@ expect "an account with no PIN yet keeps it, so sudo still has a way in" "$(left
 printf 'tester:246813\n' | chpasswd
 nop $'tester ALL=(ALL) NOPASSWD: ALL\nDefaults:tester !lecture'
 expect "a file edited by hand stays" "$(left)" "kept"
+nop $'# provision.sh, kept on upgrade\ntester ALL=(ALL) NOPASSWD: ALL'
+expect "so does the one provision.sh writes" "$(left)" "kept"
 nop 'tester ALL=(ALL) NOPASSWD: /usr/bin/true'
 expect "so does a rule that is not the image's" "$(left)" "kept"
 rm -f /etc/sudoers.d/10-moarchy

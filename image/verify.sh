@@ -597,8 +597,17 @@ d9a62ab1ec477a4be1657769dfd194c75d1a07a4357e7717aa19ad5c07c3fc26  empower.rules
 _polkit_have=$(cd "$R/usr/share/polkit-1/rules.d" 2>/dev/null && find . -maxdepth 1 -name '*.rules' -printf '%P\0' | sort -z | xargs -0r sha256sum)
 [ "$_polkit_have" = "$_polkit_want" ] && ok "polkit's rules are exactly the packages' own" \
   || no "polkit rules differ from the reviewed set: $(diff <(echo "$_polkit_want") <(echo "$_polkit_have") | grep '^[<>]' | tr '\n' '|')"
-_polkit_etc=$(find "$R/etc/polkit-1/rules.d" -mindepth 1 2>/dev/null | sed "s|^$R||" | tr '\n' ' ')
-[ -z "$_polkit_etc" ] && ok "no polkit rules in /etc" || no "polkit rules this image does not ship: $_polkit_etc"
+# polkitd also reads rules and actions from /etc, /run and /usr/local/share,
+# where no package puts any.
+_polkit_etc=$(for d in etc run usr/local/share; do find "$R/$d/polkit-1/rules.d" "$R/$d/polkit-1/actions" -mindepth 1 2>/dev/null; done | sed "s|^$R||" | tr '\n' ' ')
+[ -z "$_polkit_etc" ] && ok "no polkit rules or actions outside /usr/share" || no "polkit rules this image does not ship: $_polkit_etc"
+# An action naming a program for pkexec runs it as root with no PIN if any of
+# its defaults is yes.
+_polkit_exec=$(awk '/<action id=/ { id = $0; sub(/.*<action id="/, "", id); sub(/".*/, "", id); exe = yes = 0 }
+  /org\.freedesktop\.policykit\.exec\.path/ { exe = 1 }
+  /<allow_(any|inactive|active)>yes</ { yes = 1 }
+  /<\/action>/ { if (exe && yes) print id }' "$R"/usr/share/polkit-1/actions/*.policy 2>/dev/null | tr '\n' ' ')
+[ -z "$_polkit_exec" ] && ok "pkexec runs no program without asking" || no "pkexec runs these as root with no PIN: $_polkit_exec"
 # empower.rules answers yes for everything to that group.
 [ -z "$(awk -F: '$1 == "empower" { print $4 }' "$R/etc/group")" ] && ok "the empower group is empty" \
   || no "the empower group has members, and polkit lets them do anything: $(awk -F: '$1 == "empower" { print $4 }' "$R/etc/group")"

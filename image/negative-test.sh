@@ -167,6 +167,24 @@ sed -i 's/^empower:x:\([0-9]*\):$/empower:x:\1:moarchy/' $W/r/etc/group
 # 27. pkexec with no PIN, in its own policy
 sed -i '/action id="org.freedesktop.policykit.exec"/,/<\/action>/s|<allow_active>auth_admin</allow_active>|<allow_active>yes</allow_active>|' \
   $W/r/usr/share/polkit-1/actions/org.freedesktop.policykit.policy
+# 28. a rule in another directory polkitd reads
+mkdir -p $W/r/usr/local/share/polkit-1/rules.d
+printf 'polkit.addRule(function (a, s) { return polkit.Result.YES; });\n' \
+  > $W/r/usr/local/share/polkit-1/rules.d/49-local.rules
+# 29. an action that has pkexec run a shell as root with no PIN
+cat > $W/r/usr/share/polkit-1/actions/org.example.planted.policy <<'POLICY'
+<?xml version="1.0" encoding="UTF-8"?>
+<policyconfig>
+  <action id="org.example.planted.shell">
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/bash</annotate>
+  </action>
+</policyconfig>
+POLICY
 umount $W/r
 
 echo "==> re-sparsing"
@@ -227,6 +245,9 @@ catches "polkit rules this image does not ship: /etc/polkit-1/rules.d/49-planted
 catches "polkit rules differ from the reviewed set:.*49-wheel.rules" "a new polkit rule giving wheel everything"
 catches "the empower group has members.*moarchy" "the user in the empower group"
 catches "pkexec's own policy is not auth_admin: auth_admin yes" "pkexec with no PIN"
+catches "polkit rules this image does not ship:.*/usr/local/share/polkit-1/rules.d/49-local.rules" \
+                                        "a polkit rule in /usr/local/share"
+catches "pkexec runs these as root with no PIN: org.example.planted.shell" "a pkexec action with no PIN"
 
 echo
 if [ $rc -ne 0 ]; then ok "verify.sh exited non-zero ($rc)"; else no "verify.sh exited 0 on a broken image"; fi

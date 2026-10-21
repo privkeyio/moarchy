@@ -123,10 +123,12 @@ step_deploy() {
   say "ship the built packages to $PHONE"
   phone true 2>/dev/null || die "cannot reach $PHONE -- set PHONE=moarchy@<ip>. The account has no password by design, so ssh-copy-id cannot work: authorise a key from the phone's own terminal with ./scripts/authorize-ssh.sh"
 
-  # Passwordless sudo, so the install does not stall on a prompt.
+  # Passwordless sudo, so the install does not stall on a prompt. The comment
+  # line is what keeps the moarchy package's upgrade from removing it, which
+  # takes only the one line old images wrote (moarchy.install).
   if ! phone 'sudo -n true' 2>/dev/null; then
     info "installing sudoers drop-in (remove later with: sudo rm /etc/sudoers.d/10-moarchy)"
-    phone 'echo 123456 | sudo -S -k sh -c "echo \"$(id -un) ALL=(ALL) NOPASSWD: ALL\" > /etc/sudoers.d/10-moarchy && chmod 440 /etc/sudoers.d/10-moarchy && visudo -c -q"' 2>/dev/null ||
+    phone 'echo 123456 | sudo -S -k sh -c "{ echo \"# provision.sh, kept on upgrade\"; echo \"$(id -un) ALL=(ALL) NOPASSWD: ALL\"; } > /etc/sudoers.d/10-moarchy && chmod 440 /etc/sudoers.d/10-moarchy && visudo -c -q"' 2>/dev/null ||
       die "could not enable passwordless sudo: the phone asks for a PIN; add the drop-in from its own terminal, or flash a dev image (MOARCHY_SSH_KEY)"
   fi
 
@@ -138,7 +140,7 @@ step_deploy() {
   # neither file grants it is the one thing this must not open.
   if phone 'test -f /etc/sudoers.d/10-mobileomarchy' 2>/dev/null; then
     info "renaming sudoers drop-in 10-mobileomarchy -> 10-moarchy"
-    phone 'sudo sh -c "echo \"$(id -un) ALL=(ALL) NOPASSWD: ALL\" > /etc/sudoers.d/10-moarchy && chmod 440 /etc/sudoers.d/10-moarchy && visudo -c -q && rm -f /etc/sudoers.d/10-mobileomarchy"' 2>/dev/null ||
+    phone 'sudo sh -c "{ echo \"# provision.sh, kept on upgrade\"; echo \"$(id -un) ALL=(ALL) NOPASSWD: ALL\"; } > /etc/sudoers.d/10-moarchy && chmod 440 /etc/sudoers.d/10-moarchy && visudo -c -q && rm -f /etc/sudoers.d/10-mobileomarchy"' 2>/dev/null ||
       info "!! could not rename the sudoers drop-in; 10-mobileomarchy is still in place and still works"
   fi
 
